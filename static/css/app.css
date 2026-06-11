@@ -101,6 +101,40 @@ body {
 
 .empty { padding:40px; text-align:center; color:var(--ink3); font-size:13.5px; }
 
+/* ── 버튼 ───────────────────────────────────────────────────── */
+.xbtn { padding:9px 16px; border:1.5px solid var(--bds); border-radius:var(--rs);
+  background:var(--sf); color:var(--ink); font-size:13px; font-weight:600; cursor:pointer; }
+.xbtn:hover { background:var(--sf2); }
+.xbtn.primary { background:var(--red); border-color:var(--red); color:#fff; }
+.xbtn.sm { padding:6px 10px; font-size:12px; }
+
+/* ── 손익계산서 ──────────────────────────────────────────────── */
+.pnl-cols { display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+.pnl-row { display:flex; justify-content:space-between; padding:8px 0;
+  border-bottom:1px solid var(--bd); font-size:13px; color:var(--ink2);
+  font-feature-settings:'tnum' 1; }
+.pnl-row.tot { font-weight:800; color:var(--ink); border-top:2px solid var(--bds);
+  border-bottom:none; padding-top:11px; }
+@media (max-width:767px) { .pnl-cols { grid-template-columns:1fr; } }
+
+/* ── 업로드 ─────────────────────────────────────────────────── */
+.up-grid { display:grid; grid-template-columns:repeat(2,1fr); gap:16px; margin-bottom:16px; }
+.up-grid select, .up-grid input[type=file] { display:block; width:100%; padding:9px 12px;
+  border:1.5px solid var(--bds); border-radius:var(--rs); font-size:13px;
+  background:var(--sf); color:var(--ink); margin-bottom:10px; }
+@media (max-width:767px) { .up-grid { grid-template-columns:1fr; } }
+
+/* ── 미분류 검토 ─────────────────────────────────────────────── */
+.rv-row { display:flex; justify-content:space-between; align-items:center; gap:12px;
+  padding:12px 4px; border-bottom:1px solid var(--bd); flex-wrap:wrap; }
+.rv-info { font-size:13px; color:var(--ink2); flex:1; min-width:240px; }
+.rv-ctl { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+.rv-ctl select { padding:7px 10px; border:1.5px solid var(--bds); border-radius:8px;
+  font-size:12.5px; background:var(--sf); color:var(--ink); max-width:150px; }
+
+/* 필터바 select 공통 */
+.filter-bar select { max-width:200px; }
+
 /* ── 모바일 ─────────────────────────────────────────────────── */
 @media (max-width:767px) {
   .sidebar { display:none; }

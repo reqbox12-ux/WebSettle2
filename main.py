@@ -118,22 +118,361 @@ async def api_me(request: Request):
 
 
 # ── 대시보드 API ──────────────────────────────────────────────
-@app.get("/api/summary")
-async def api_summary(request: Request, year: int, month: int):
-    require_auth(request)
+def _summary(year: int, month: int):
     from domains.dashboard.service import build_summary
     df = build_summary(year, month)
+    return df
+
+
+def _totals(df) -> dict:
     if df is None or df.empty:
-        return {"rows": [], "totals": {}}
-    rows = df.fillna(0).to_dict("records")
-    totals = {
+        return {}
+    return {
         "총매출": int(df["총매출"].sum()),
         "총지출": int(df["총지출"].sum()),
         "손익":   int(df["손익"].sum()),
         "이익률": round(float(df["손익"].sum()) / float(df["총매출"].sum()) * 100, 1)
                   if df["총매출"].sum() else 0,
     }
-    return {"rows": rows, "totals": totals}
+
+
+@app.get("/api/summary")
+async def api_summary(request: Request, year: int, month: int):
+    require_auth(request)
+    df = _summary(year, month)
+    if df is None or df.empty:
+        return {"rows": [], "totals": {}, "prev": {}, "yoy": {}}
+    # 전월 / 전년 동월
+    py, pm = (year - 1, 12) if month == 1 else (year, month - 1)
+    prev_df = _summary(py, pm)
+    yoy_df  = _summary(year - 1, month)
+    return {
+        "rows":   df.fillna(0).to_dict("records"),
+        "totals": _totals(df),
+        "prev":   _totals(prev_df),
+        "yoy":    _totals(yoy_df),
+    }
+
+
+@app.get("/api/summary/trend")
+async def api_trend(request: Request, year: int, month: int):
+    require_auth(request)
+    from domains.dashboard.service import build_trend
+    df = build_trend(year, month)
+    if df is None or df.empty:
+        return {"months": [], "revenue": [], "profit": []}
+    g = df.groupby("month").agg(총매출=("총매출", "sum"), 손익=("손익", "sum")).reset_index()
+    return {
+        "months":  [int(m) for m in g["month"]],
+        "revenue": [int(v) for v in g["총매출"]],
+        "profit":  [int(v) for v in g["손익"]],
+    }
+
+
+@app.get("/api/summary/excel")
+async def api_summary_excel(request: Request, year: int, month: int):
+    require_auth(request)
+    import io
+    import pandas as pd
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+    df = _summary(year, month)
+    if df is None or df.empty:
+        raise HTTPException(404, "데이터가 없습니다")
+    cols = {"branch": "지점", "카드공급가액": "카드공급가액", "카드수수료": "카드수수료",
+            "카드실수령": "카드실수령", "현금공급가액": "현금공급가액", "총매출": "총매출",
+            "인건비합계": "인건비합계", "기타지출": "기타지출", "부가세합계": "부가세합계",
+            "총지출": "총지출", "손익": "손익", "이익률": "이익률(%)"}
+    out = df[[c for c in cols if c in df.columns]].rename(columns=cols)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        out.to_excel(w, sheet_name=f"{year}년{month:02d}월", index=False)
+    buf.seek(0)
+    fn = quote(f"손익현황_{year}년{month:02d}월.xlsx")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
+
+
+# ── 지점 상세 API ─────────────────────────────────────────────
+@app.get("/api/branches")
+async def api_branches(request: Request):
+    require_auth(request)
+    from domains.branch.db import get_active_branch_names
+    return get_active_branch_names()
+
+
+@app.get("/api/branch/pnl")
+async def api_branch_pnl(request: Request, year: int, month: int, branch: str):
+    require_auth(request)
+    from domains.dashboard.service import c_rev, c_exp
+    from modules.db import get_branch_goals
+    df = _summary(year, month)
+    row = {}
+    if df is not None and not df.empty:
+        m = df[df.branch == branch]
+        if not m.empty:
+            row = {k: (round(float(v), 1) if isinstance(v, float) else v)
+                   for k, v in m.iloc[0].fillna(0).to_dict().items()}
+    rev_df = c_rev(year, month)
+    exp_df = c_exp(year, month)
+    rev_by_cat = {}
+    exp_by_cat = {}
+    if rev_df is not None and not rev_df.empty:
+        br = rev_df[rev_df.branch == branch]
+        if not br.empty:
+            rev_by_cat = {str(k): int(v) for k, v in
+                          br.groupby("category")["supply_amount"].sum().items()}
+    if exp_df is not None and not exp_df.empty:
+        br = exp_df[exp_df.branch == branch]
+        if not br.empty:
+            exp_by_cat = {str(k): int(v) for k, v in
+                          br.groupby("category")["amount"].sum().items()}
+    goal = get_branch_goals(year, month).get(branch, 0)
+    return {"summary": row, "rev_by_cat": rev_by_cat, "exp_by_cat": exp_by_cat, "goal": goal}
+
+
+class GoalBody(BaseModel):
+    year:   int
+    month:  int
+    branch: str
+    goal:   int
+
+
+@app.post("/api/branch/goal")
+async def api_branch_goal(request: Request, body: GoalBody):
+    require_auth(request)
+    from modules.db import set_branch_goal
+    set_branch_goal(body.year, body.month, body.branch, body.goal)
+    return {"ok": True}
+
+
+# ── 출퇴근 현황 API ────────────────────────────────────────────
+@app.get("/api/attendance")
+async def api_attendance(request: Request, year: int, month: int, branch: str = ""):
+    require_auth(request)
+    from modules.db import get_conn
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    q = """SELECT e.name, e.branch, a.work_date, a.clock_in, a.clock_out,
+                  a.work_minutes, a.break_minutes, a.status
+           FROM attendance a JOIN employees e ON a.employee_id = e.id
+           WHERE a.work_date LIKE ?"""
+    args = [f"{prefix}%"]
+    if branch:
+        q += " AND e.branch=?"
+        args.append(branch)
+    q += " ORDER BY a.work_date DESC, e.branch, e.name"
+    rows = [dict(zip(["name", "branch", "work_date", "clock_in", "clock_out",
+                      "work_minutes", "break_minutes", "status"], r))
+            for r in conn.execute(q, args).fetchall()]
+    conn.close()
+    return rows
+
+
+@app.get("/api/attendance/branches")
+async def api_att_branches(request: Request):
+    require_auth(request)
+    from modules.db import get_conn
+    conn = get_conn()
+    try:
+        rows = conn.execute(
+            "SELECT DISTINCT branch FROM employees WHERE branch IS NOT NULL AND branch!='' ORDER BY branch"
+        ).fetchall()
+        return [r[0] for r in rows]
+    finally:
+        conn.close()
+
+
+# ── 직원 목록 API ─────────────────────────────────────────────
+@app.get("/api/employees")
+async def api_employees(request: Request):
+    require_auth(request)
+    from domains.payroll.db import get_all_employees
+    return get_all_employees()
+
+
+# ── 데이터 업로드 API ─────────────────────────────────────────
+from fastapi import UploadFile, File, Form
+import tempfile
+import os as _os
+
+
+@app.post("/api/upload/card")
+async def api_upload_card(request: Request, year: int = Form(...), month: int = Form(...),
+                          kind: str = Form(...), file: UploadFile = File(...)):
+    """카드매출 업로드 — kind: 'aggregate' | 'credit'"""
+    require_auth(request)
+    from modules.parser import parse_card_aggregate, parse_credit_card
+    from modules.db import upsert_card_sales
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        tmp.write(await file.read())
+        tp = tmp.name
+    try:
+        if kind == "aggregate":
+            df = parse_card_aggregate(tp, year, month)
+            upsert_card_sales(df, "card_aggregate", year, month)
+        else:
+            df = parse_credit_card(tp, year, month)
+            upsert_card_sales(df, "credit_card", year, month)
+        unmapped = int((df.branch == "미매핑").sum()) if "branch" in df.columns else 0
+        return {"ok": True, "count": len(df), "unmapped": unmapped}
+    except Exception as e:
+        raise HTTPException(400, f"파싱 오류: {e}")
+    finally:
+        _os.unlink(tp)
+
+
+@app.post("/api/upload/bank")
+async def api_upload_bank(request: Request, year: int = Form(...), month: int = Form(...),
+                          bank: str = Form(...), file: UploadFile = File(...)):
+    """통장내역 업로드 — bank: 'hana' | 'shinhan'"""
+    require_auth(request)
+    import pandas as pd
+    from modules.parser import parse_hana, parse_shinhan, recalc_vat
+    from modules.classifier import classify_transactions
+    from modules.db import upsert_bank_transactions
+    import io
+    content = await file.read()
+    xl = pd.ExcelFile(io.BytesIO(content))
+    try:
+        df = parse_hana(xl, year, month) if bank == "hana" else parse_shinhan(xl, year, month)
+        if df.empty:
+            raise HTTPException(400, "인식 가능한 시트가 없습니다")
+        df = classify_transactions(df, bank)
+        df = recalc_vat(df)
+        upsert_bank_transactions(df, bank, year, month)
+        return {"ok": True, "count": len(df),
+                "auto": int((df.needs_review == 0).sum()),
+                "review": int(df.needs_review.sum())}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"파싱 오류: {e}")
+
+
+@app.post("/api/upload/payroll")
+async def api_upload_payroll(request: Request, year: int = Form(...), month: int = Form(...),
+                             file: UploadFile = File(...)):
+    require_auth(request)
+    import pandas as pd
+    import io
+    from modules.parser import parse_payroll_insured, parse_payroll_freelance
+    from modules.db import upsert_payroll
+    xl = pd.ExcelFile(io.BytesIO(await file.read()))
+    parts = []
+    try:
+        if "지점별집계" in xl.sheet_names:
+            df = parse_payroll_insured(xl, year, month)
+            if not df.empty:
+                upsert_payroll(df, year, month, "insured")
+                parts.append(f"4대보험 {len(df)}건")
+        if "사업소득자" in xl.sheet_names:
+            df = parse_payroll_freelance(xl, year, month)
+            if not df.empty:
+                upsert_payroll(df, year, month, "freelance")
+                parts.append(f"프리랜서 {len(df)}건")
+        if not parts:
+            raise HTTPException(400, f"인식된 시트 없음 (현재: {', '.join(xl.sheet_names)})")
+        return {"ok": True, "msg": " · ".join(parts)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(400, f"파싱 오류: {e}")
+
+
+@app.delete("/api/upload/card")
+async def api_delete_card(request: Request, year: int, month: int):
+    require_auth(request)
+    from modules.db import delete_card_sales
+    delete_card_sales(year, month)
+    return {"ok": True}
+
+
+@app.delete("/api/upload/bank")
+async def api_delete_bank(request: Request, year: int, month: int, bank: str = ""):
+    require_auth(request)
+    from modules.db import delete_bank_transactions
+    delete_bank_transactions(year, month, bank or None)
+    return {"ok": True}
+
+
+# ── 설정: 미분류 검토 + 규칙 관리 ──────────────────────────────
+@app.get("/api/rules/transactions")
+async def api_rules_tx(request: Request, year: int, month: int,
+                       bank: str = "", unclassified: int = 1):
+    require_auth(request)
+    from modules.db import get_all_bank_transactions
+    df = get_all_bank_transactions(year, month, bank or None)
+    if df is None or df.empty:
+        return []
+    if unclassified:
+        df = df[df.needs_review == 1]
+    cols = ["id", "bank", "tx_date", "description", "counterpart",
+            "deposit", "withdrawal", "branch", "category", "needs_review",
+            "classification_source"]
+    return df[[c for c in cols if c in df.columns]].fillna("").to_dict("records")
+
+
+class ClassifyBody(BaseModel):
+    tx_id:    int
+    branch:   str
+    category: str
+    add_rule: bool = False
+    bank:     str = ""
+    keyword:  str = ""
+
+
+@app.post("/api/rules/classify")
+async def api_rules_classify(request: Request, body: ClassifyBody):
+    require_auth(request)
+    from modules.db import update_transaction_classification
+    update_transaction_classification(body.tx_id, body.branch, body.category, "manual")
+    if body.add_rule and body.keyword and body.bank:
+        from modules.classifier import add_rule
+        add_rule(body.bank, body.keyword, body.branch, body.category)
+    return {"ok": True}
+
+
+@app.get("/api/rules")
+async def api_rules_list(request: Request, bank: str = ""):
+    require_auth(request)
+    from modules.db import get_keyword_rules
+    df = get_keyword_rules(bank or None)
+    if df is None or len(df) == 0:
+        return []
+    return df.fillna("").to_dict("records")
+
+
+class RuleBody(BaseModel):
+    bank:     str
+    keyword:  str
+    branch:   str
+    category: str
+
+
+@app.post("/api/rules")
+async def api_rules_add(request: Request, body: RuleBody):
+    require_auth(request)
+    from modules.classifier import add_rule
+    add_rule(body.bank, body.keyword, body.branch, body.category)
+    return {"ok": True}
+
+
+@app.delete("/api/rules/{rule_id}")
+async def api_rules_del(request: Request, rule_id: int):
+    require_auth(request)
+    from modules.db import delete_keyword_rule
+    delete_keyword_rule(rule_id)
+    return {"ok": True}
+
+
+@app.get("/api/meta")
+async def api_meta(request: Request):
+    """지점 목록 + 계정과목 목록 (분류 UI용)"""
+    require_auth(request)
+    from shared.config import BRANCH_LIST, ALL_CATEGORIES
+    return {"branches": BRANCH_LIST, "categories": ALL_CATEGORIES}
 
 
 if __name__ == "__main__":
