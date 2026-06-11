@@ -282,6 +282,30 @@
     if (!locSelId && brList.length) locSelId = brList[0].id;
 
     body.innerHTML = `
+      <div class="card"><div class="card-head">지점 목록 (${brList.length}개) ·
+        위치 등록 ${brList.filter(b => b.lat && b.lng).length}/${brList.length}개</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl">
+            <thead><tr><th>지점명</th><th>계약일</th><th>해지일</th><th>재계약</th><th>주소</th>
+              <th>위치</th><th>반경</th><th>비고</th><th></th></tr></thead>
+            <tbody>${brList.map(b => `<tr>
+              <td style="text-align:left"><input id="bn-${b.id}" value="${b.name || ''}" class="cell-in" style="width:125px"></td>
+              <td><input id="bc-${b.id}" value="${b.contract_date || ''}" class="cell-in" style="width:95px"></td>
+              <td><input id="bt-${b.id}" value="${b.termination_date || ''}" class="cell-in" style="width:95px"></td>
+              <td><input type="checkbox" id="ba-${b.id}" ${b.is_active ? 'checked' : ''}></td>
+              <td style="text-align:left"><input id="addr-${b.id}" value="${b.address || ''}" class="cell-in" style="width:185px"></td>
+              <td style="white-space:nowrap">${b.lat && b.lng
+                ? `<span class="bdg pos" style="cursor:pointer" onclick="gotoLoc(${b.id})"
+                     title="${(+b.lat).toFixed(5)}, ${(+b.lng).toFixed(5)}">✅ 등록</span>`
+                : `<span class="bdg neg" style="cursor:pointer" onclick="gotoLoc(${b.id})">❌ 미등록</span>`}</td>
+              <td>${b.attendance_radius || 300}m</td>
+              <td><input id="bo-${b.id}" value="${b.note || ''}" class="cell-in" style="width:100px"></td>
+              <td><button class="xbtn sm primary" onclick="saveBr(${b.id})">저장</button></td>
+            </tr>`).join('')}</tbody>
+          </table></div>
+        <div style="padding:0 20px 14px;font-size:12px;color:var(--ink3)">
+          💡 위치 뱃지를 클릭하면 아래 위치 편집으로 이동합니다.</div></div>
+
       <div class="card" style="padding:18px 20px;margin-bottom:14px">
         <div style="font-weight:800;margin-bottom:10px">➕ 지점 추가</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -291,22 +315,7 @@
           <button class="xbtn primary" onclick="addBranch()">추가</button>
         </div></div>
 
-      <div class="card"><div class="card-head">지점 목록 (${brList.length}개)</div>
-        <div style="overflow-x:auto;padding:8px 0 4px">
-          <table class="tbl">
-            <thead><tr><th>지점명</th><th>계약일</th><th>해지일</th><th>재계약</th><th>주소</th><th>비고</th><th></th></tr></thead>
-            <tbody>${brList.map(b => `<tr>
-              <td style="text-align:left"><input id="bn-${b.id}" value="${b.name || ''}" class="cell-in" style="width:130px"></td>
-              <td><input id="bc-${b.id}" value="${b.contract_date || ''}" class="cell-in" style="width:100px"></td>
-              <td><input id="bt-${b.id}" value="${b.termination_date || ''}" class="cell-in" style="width:100px"></td>
-              <td><input type="checkbox" id="ba-${b.id}" ${b.is_active ? 'checked' : ''}></td>
-              <td style="text-align:left"><input id="addr-${b.id}" value="${b.address || ''}" class="cell-in" style="width:190px"></td>
-              <td><input id="bo-${b.id}" value="${b.note || ''}" class="cell-in" style="width:110px"></td>
-              <td><button class="xbtn sm primary" onclick="saveBr(${b.id})">저장</button></td>
-            </tr>`).join('')}</tbody>
-          </table></div></div>
-
-      <div class="card" style="padding:18px 20px">
+      <div class="card" style="padding:18px 20px" id="loc-edit-card">
         <div style="font-weight:800;margin-bottom:4px">📍 위치 상세 편집 (GPS 출퇴근용)</div>
         <div style="font-size:12px;color:var(--ink3);margin-bottom:14px">
           오른쪽 주소 검색에서 클릭하면 주소가 자동 입력됩니다 → 좌표 자동 변환 → 저장</div>
@@ -339,20 +348,7 @@
         </div>
       </div>
 
-      <div class="card"><div class="card-head">위치 등록 현황
-        (${brList.filter(b => b.lat && b.lng).length}/${brList.length}개)</div>
-        <div style="overflow-x:auto;padding:8px 0 4px">
-          <table class="tbl">
-            <thead><tr><th>지점명</th><th>주소</th><th>위도</th><th>경도</th><th>반경</th><th>상태</th></tr></thead>
-            <tbody>${brList.map(b => `<tr>
-              <td style="text-align:left">${b.name}</td>
-              <td style="text-align:left">${b.address || '미입력'}</td>
-              <td>${b.lat ? (+b.lat).toFixed(6) : '—'}</td>
-              <td>${b.lng ? (+b.lng).toFixed(6) : '—'}</td>
-              <td>${b.attendance_radius || 300}m</td>
-              <td>${b.lat ? '✅ 등록' : '❌ 미등록'}</td>
-            </tr>`).join('')}</tbody>
-          </table></div></div>`;
+      `;
 
     // 위치 편집 초기화 + 이벤트
     const radEl = document.getElementById('loc-rad');
@@ -464,6 +460,14 @@
     const r = await api('/api/branch/upsert', { method: 'POST', body: JSON.stringify(body) });
     if (r && r.ok) { showToast(`✅ '${b.name}' 위치 저장 완료`); loadBranchMgmt(); }
     else showToast('저장 실패', 'err');
+  };
+
+  window.gotoLoc = function (id) {
+    locSelId = id;
+    const sel = document.getElementById('loc-sel');
+    if (sel) sel.value = id;
+    fillLocForm();
+    document.getElementById('loc-edit-card').scrollIntoView({ behavior: 'smooth' });
   };
 
   window.addBranch = async function () {
