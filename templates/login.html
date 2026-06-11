@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WebSettle2 · 라온스포츠 ERP</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+  <link rel="stylesheet" href="/static/css/app.css?v={{ asset_ver }}">
+</head>
+<body class="login-body">
+  <div class="login-wrap">
+    <div class="login-card">
+      <div class="login-logo">LAON<span>SPORTS</span></div>
+      <div class="login-sub">정산 ERP · 차세대</div>
+      <div id="err" class="login-err"></div>
+      <form onsubmit="doLogin(event)">
+        <label>아이디</label>
+        <input id="username" type="text" autocomplete="username" required>
+        <label>비밀번호</label>
+        <input id="password" type="password" autocomplete="current-password" required>
+        <button type="submit" id="btn">로그인</button>
+      </form>
+    </div>
+  </div>
+  <script>
+    async function doLogin(e) {
+      e.preventDefault();
+      const btn = document.getElementById('btn');
+      const err = document.getElementById('err');
+      btn.disabled = true; btn.textContent = '로그인 중…'; err.textContent = '';
+      try {
+        const resp = await fetch('/api/auth/login', {
+          method: 'POST', headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({
+            username: document.getElementById('username').value.trim(),
+            password: document.getElementById('password').value,
+          })
+        });
+        const data = await resp.json();
+        if (!resp.ok) { err.textContent = data.detail || '로그인 실패'; return; }
+        localStorage.setItem('ws2_token', data.token);
+        localStorage.setItem('ws2_name', data.name);
+        localStorage.setItem('ws2_role', data.role);
+        document.cookie = 'ws2_token=' + data.token + ';path=/;max-age=2592000';
+        location.href = '/app';
+      } catch (e2) { err.textContent = '네트워크 오류'; }
+      finally { btn.disabled = false; btn.textContent = '로그인'; }
+    }
+    if (localStorage.getItem('ws2_token')) location.href = '/app';
+  </script>
+</body>
+</html>
