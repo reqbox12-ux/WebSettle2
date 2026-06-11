@@ -87,7 +87,8 @@
     document.getElementById('app-root').innerHTML = `
       <div class="app">
         <nav class="sidebar">
-          <div class="sb-logo">LAON<span>SPORTS</span></div>
+          <div class="sb-logo"><img src="/static/img/logo.png" alt="LAONSPORTS"
+            style="height:34px;object-fit:contain"></div>
           <div class="sb-nav">${nav}</div>
           <div class="sb-foot">
             ${user.name} (${user.role === 'admin' ? '관리자' : '사용자'})<br>
