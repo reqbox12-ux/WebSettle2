@@ -149,6 +149,10 @@ body {
   border-radius:8px; font-size:13px; background:var(--sf); color:var(--ink); }
 @media (max-width:767px) { .emp-grid { grid-template-columns:repeat(2,1fr); } }
 
+/* ── 위치 편집 레이아웃 ──────────────────────────────────────── */
+.loc-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
+@media (max-width:900px) { .loc-grid { grid-template-columns:1fr; } }
+
 /* ── 모바일 ─────────────────────────────────────────────────── */
 @media (max-width:767px) {
   .sidebar { display:none; }

@@ -237,6 +237,7 @@
         <button class="xbtn ${brTab === 'detail' ? 'primary' : ''}" onclick="brTabGo('detail')">📊 상세</button>
         <button class="xbtn ${brTab === 'mgmt' ? 'primary' : ''}" onclick="brTabGo('mgmt')">🏢 지점 관리</button>
         <button class="xbtn ${brTab === 'revenue' ? 'primary' : ''}" onclick="brTabGo('revenue')">📝 매출 입력</button>
+        <button class="xbtn ${brTab === 'reports' ? 'primary' : ''}" onclick="brTabGo('reports')">📬 지점 보고</button>
       </div>
       ${brTab !== 'mgmt' ? `<div class="filter-bar">${ymFilter(loadBranchTab)}
         ${brTab === 'detail' ? `
@@ -255,6 +256,7 @@
     if (brTab === 'detail')  return loadBranch();
     if (brTab === 'mgmt')    return loadBranchMgmt();
     if (brTab === 'revenue') return loadBmr();
+    if (brTab === 'reports') return loadReports();
   }
 
   window.dlPnl = async function () {
@@ -268,41 +270,227 @@
   };
 
   // ── 지점 관리 ──────────────────────────────────────────────
+  let brList = [];
+  let locSelId = 0;
+
   async function loadBranchMgmt() {
     const body = document.getElementById('br-body');
     body.innerHTML = '<div class="empty">로드 중…</div>';
     const r = await api('/api/branch/list');
     if (!r || !r.ok) return;
-    const list = await r.json();
+    brList = await r.json();
+    if (!locSelId && brList.length) locSelId = brList[0].id;
+
     body.innerHTML = `
-      <div class="card"><div class="card-head">지점 ${list.length}개 — GPS 좌표·출퇴근 반경 관리</div>
+      <div class="card" style="padding:18px 20px;margin-bottom:14px">
+        <div style="font-weight:800;margin-bottom:10px">➕ 지점 추가</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <input id="nb-name" placeholder="지점명 *" class="cell-in" style="width:160px">
+          <input id="nb-contract" placeholder="계약일 (YYYY-MM-DD)" class="cell-in" style="width:150px">
+          <input id="nb-note" placeholder="비고" class="cell-in" style="width:160px">
+          <button class="xbtn primary" onclick="addBranch()">추가</button>
+        </div></div>
+
+      <div class="card"><div class="card-head">지점 목록 (${brList.length}개)</div>
         <div style="overflow-x:auto;padding:8px 0 4px">
           <table class="tbl">
-            <thead><tr><th>지점명</th><th>주소</th><th>위도</th><th>경도</th><th>반경(m)</th><th>활성</th><th></th></tr></thead>
-            <tbody>${list.map(b => `<tr>
-              <td style="text-align:left">${b.name}</td>
-              <td style="text-align:left"><input id="addr-${b.id}" value="${b.address || ''}" class="cell-in" style="width:200px"></td>
-              <td><input id="lat-${b.id}" value="${b.lat ?? ''}" class="cell-in" style="width:90px"></td>
-              <td><input id="lng-${b.id}" value="${b.lng ?? ''}" class="cell-in" style="width:90px"></td>
-              <td><input id="rad-${b.id}" value="${b.attendance_radius || 300}" class="cell-in" style="width:60px"></td>
-              <td>${b.is_active ? '✅' : '—'}</td>
-              <td><button class="xbtn sm primary" onclick="saveBr(${b.id},'${b.name.replace(/'/g,'')}', ${b.is_active||0})">저장</button></td>
+            <thead><tr><th>지점명</th><th>계약일</th><th>해지일</th><th>재계약</th><th>주소</th><th>비고</th><th></th></tr></thead>
+            <tbody>${brList.map(b => `<tr>
+              <td style="text-align:left"><input id="bn-${b.id}" value="${b.name || ''}" class="cell-in" style="width:130px"></td>
+              <td><input id="bc-${b.id}" value="${b.contract_date || ''}" class="cell-in" style="width:100px"></td>
+              <td><input id="bt-${b.id}" value="${b.termination_date || ''}" class="cell-in" style="width:100px"></td>
+              <td><input type="checkbox" id="ba-${b.id}" ${b.is_active ? 'checked' : ''}></td>
+              <td style="text-align:left"><input id="addr-${b.id}" value="${b.address || ''}" class="cell-in" style="width:190px"></td>
+              <td><input id="bo-${b.id}" value="${b.note || ''}" class="cell-in" style="width:110px"></td>
+              <td><button class="xbtn sm primary" onclick="saveBr(${b.id})">저장</button></td>
             </tr>`).join('')}</tbody>
           </table></div></div>
-      <div class="card" style="padding:12px 18px;font-size:12.5px;color:var(--ink3)">
-        💡 좌표는 카카오맵에서 지점 검색 → 우클릭 → '여기 좌표'로 확인할 수 있습니다.
-        반경은 출퇴근 GPS 허용 거리(기본 300m)입니다.</div>`;
+
+      <div class="card" style="padding:18px 20px">
+        <div style="font-weight:800;margin-bottom:4px">📍 위치 상세 편집 (GPS 출퇴근용)</div>
+        <div style="font-size:12px;color:var(--ink3);margin-bottom:14px">
+          오른쪽 주소 검색에서 클릭하면 주소가 자동 입력됩니다 → 좌표 자동 변환 → 저장</div>
+        <div class="loc-grid">
+          <div>
+            <select id="loc-sel" style="width:100%;padding:9px 12px;border:1.5px solid var(--bds);
+              border-radius:8px;background:var(--sf);color:var(--ink);margin-bottom:10px">
+              ${brList.map(b => `<option value="${b.id}" ${b.id === locSelId ? 'selected' : ''}>${b.name}</option>`).join('')}
+            </select>
+            <input id="loc-addr" placeholder="주소" class="cell-in" style="width:100%;margin-bottom:8px">
+            <button class="xbtn" onclick="geocodeAddr()" style="width:100%;margin-bottom:8px">📍 주소 → 위도/경도 자동 변환</button>
+            <div style="display:flex;gap:8px;margin-bottom:8px">
+              <input id="loc-lat" placeholder="위도" class="cell-in" style="flex:1">
+              <input id="loc-lng" placeholder="경도" class="cell-in" style="flex:1">
+            </div>
+            <label style="font-size:12px;color:var(--ink2);font-weight:700">📡 출퇴근 허용 반경:
+              <span id="rad-val"></span>m</label>
+            <input id="loc-rad" type="range" min="100" max="500" step="50" style="width:100%;margin:6px 0 12px">
+            <button class="xbtn primary" onclick="saveLoc()" style="width:100%">💾 위치 정보 저장</button>
+            <div id="map-preview" style="margin-top:14px"></div>
+          </div>
+          <div>
+            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:6px">📍 주소 검색 (다음 우편번호)</div>
+            <div id="daum-postcode" style="height:420px;border:1px solid var(--bd);border-radius:10px;overflow:hidden"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card"><div class="card-head">위치 등록 현황
+        (${brList.filter(b => b.lat && b.lng).length}/${brList.length}개)</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl">
+            <thead><tr><th>지점명</th><th>주소</th><th>위도</th><th>경도</th><th>반경</th><th>상태</th></tr></thead>
+            <tbody>${brList.map(b => `<tr>
+              <td style="text-align:left">${b.name}</td>
+              <td style="text-align:left">${b.address || '미입력'}</td>
+              <td>${b.lat ? (+b.lat).toFixed(6) : '—'}</td>
+              <td>${b.lng ? (+b.lng).toFixed(6) : '—'}</td>
+              <td>${b.attendance_radius || 300}m</td>
+              <td>${b.lat ? '✅ 등록' : '❌ 미등록'}</td>
+            </tr>`).join('')}</tbody>
+          </table></div></div>`;
+
+    // 위치 편집 초기화 + 이벤트
+    const radEl = document.getElementById('loc-rad');
+    radEl.addEventListener('input', () => {
+      document.getElementById('rad-val').textContent = radEl.value;
+    });
+    document.getElementById('loc-sel').addEventListener('change', e => {
+      locSelId = +e.target.value; fillLocForm();
+    });
+    fillLocForm();
+    initDaumPostcode();
   }
 
-  window.saveBr = async function (id, name, isActive) {
-    const v = (x) => document.getElementById(`${x}-${id}`).value.trim();
-    const body = { id, name, address: v('addr'),
-      lat: v('lat') ? parseFloat(v('lat')) : null,
-      lng: v('lng') ? parseFloat(v('lng')) : null,
-      attendance_radius: parseInt(v('rad')) || 300, is_active: isActive };
+  function fillLocForm() {
+    const b = brList.find(x => x.id === locSelId) || {};
+    document.getElementById('loc-addr').value = b.address || '';
+    document.getElementById('loc-lat').value  = b.lat ?? '';
+    document.getElementById('loc-lng').value  = b.lng ?? '';
+    const rad = b.attendance_radius || 300;
+    document.getElementById('loc-rad').value = rad;
+    document.getElementById('rad-val').textContent = rad;
+    updateMapPreview();
+  }
+
+  function updateMapPreview() {
+    const lat = parseFloat(document.getElementById('loc-lat').value);
+    const lng = parseFloat(document.getElementById('loc-lng').value);
+    const b   = brList.find(x => x.id === locSelId) || {};
+    const el  = document.getElementById('map-preview');
+    if (lat && lng) {
+      el.innerHTML = `<iframe src="https://map.kakao.com/link/map/${(b.name||'').replace(/['"]/g,'')},${lat},${lng}"
+        style="width:100%;height:280px;border:1px solid var(--bd);border-radius:10px"></iframe>`;
+    } else el.innerHTML = '';
+  }
+
+  function initDaumPostcode() {
+    const mount = () => {
+      new daum.Postcode({
+        oncomplete: function (d) {
+          const addr = d.roadAddress || d.jibunAddress;
+          document.getElementById('loc-addr').value = addr;
+          showToast('📋 주소 입력 완료 — 좌표 자동 변환을 눌러주세요');
+        },
+        width: '100%', height: '420px',
+      }).embed(document.getElementById('daum-postcode'), { autoClose: false });
+    };
+    if (window.daum && window.daum.Postcode) { mount(); return; }
+    const s = document.createElement('script');
+    s.src = 'https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js';
+    s.onload = mount;
+    document.head.appendChild(s);
+  }
+
+  window.geocodeAddr = async function () {
+    const addr = document.getElementById('loc-addr').value.trim();
+    if (!addr) { showToast('주소를 먼저 입력하세요', 'err'); return; }
+    showToast('🔍 좌표 변환 중…');
+    const r = await api(`/api/geocode?address=${encodeURIComponent(addr)}`);
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (r && r.ok) {
+      document.getElementById('loc-lat').value = d.lat.toFixed(6);
+      document.getElementById('loc-lng').value = d.lng.toFixed(6);
+      showToast(`✅ 좌표 변환 완료: ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}`);
+      updateMapPreview();
+    } else showToast(d.detail || '좌표를 찾지 못했습니다', 'err');
+  };
+
+  window.saveLoc = async function () {
+    const b = brList.find(x => x.id === locSelId);
+    if (!b) return;
+    const lat = parseFloat(document.getElementById('loc-lat').value) || null;
+    const lng = parseFloat(document.getElementById('loc-lng').value) || null;
+    const body = { ...b, address: document.getElementById('loc-addr').value.trim(),
+      lat, lng, attendance_radius: parseInt(document.getElementById('loc-rad').value) || 300 };
     const r = await api('/api/branch/upsert', { method: 'POST', body: JSON.stringify(body) });
-    if (r && r.ok) showToast(`✅ ${name} 저장 완료`);
+    if (r && r.ok) { showToast(`✅ '${b.name}' 위치 저장 완료`); loadBranchMgmt(); }
     else showToast('저장 실패', 'err');
+  };
+
+  window.addBranch = async function () {
+    const name = document.getElementById('nb-name').value.trim();
+    if (!name) { showToast('지점명을 입력하세요', 'err'); return; }
+    const r = await api('/api/branch/upsert', { method: 'POST', body: JSON.stringify({
+      name, contract_date: document.getElementById('nb-contract').value.trim(),
+      note: document.getElementById('nb-note').value.trim(), is_active: 1 }) });
+    if (r && r.ok) { showToast(`✅ '${name}' 지점 추가 완료`); loadBranchMgmt(); }
+    else showToast('추가 실패', 'err');
+  };
+
+  window.saveBr = async function (id) {
+    const b = brList.find(x => x.id === id) || {};
+    const v = (p) => document.getElementById(`${p}-${id}`).value.trim();
+    const body = { ...b, id, name: v('bn'), contract_date: v('bc'),
+      termination_date: v('bt'), address: v('addr'), note: v('bo'),
+      is_active: document.getElementById(`ba-${id}`).checked ? 1 : 0 };
+    const r = await api('/api/branch/upsert', { method: 'POST', body: JSON.stringify(body) });
+    if (r && r.ok) showToast(`✅ ${body.name} 저장 완료`);
+    else showToast('저장 실패', 'err');
+  };
+
+  // ── 지점 보고 (포털 연동) ──────────────────────────────────
+  async function loadReports() {
+    const body = document.getElementById('br-body');
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const r = await api('/api/reports');
+    if (!r || !r.ok) return;
+    const d = await r.json();
+    const inqLbl = { pw_reset: '🔑 비밀번호 초기화', account: '📨 계정 문의', etc: '💬 기타' };
+
+    const section = (title, rows, render, kind) => `
+      <div class="card"><div class="card-head">${title} (${rows.length}건)</div>
+        <div style="padding:8px 16px 16px">
+          ${rows.length ? rows.map(x => `
+            <div style="display:flex;align-items:center;gap:10px;padding:9px 4px;
+                 border-bottom:1px solid var(--bd);font-size:13px;flex-wrap:wrap">
+              <div style="flex:1;min-width:200px">${render(x)}</div>
+              <button class="xbtn sm" onclick="resolveReport('${kind}',${x.id})">✅ 처리</button>
+            </div>`).join('') : '<div style="color:var(--ink3);font-size:13px;padding:8px 0">📭 대기 건 없음</div>'}
+        </div></div>`;
+
+    body.innerHTML = `
+      <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
+        <div class="kpi"><div class="kpi-lbl">오늘 출근</div><div class="kpi-val">${d.attendance_today}명</div></div>
+        <div class="kpi"><div class="kpi-lbl">AS 대기</div><div class="kpi-val ${d.as_requests.length ? 'neg' : ''}">${d.as_requests.length}건</div></div>
+        <div class="kpi"><div class="kpi-lbl">비품 대기</div><div class="kpi-val ${d.supply_requests.length ? 'neg' : ''}">${d.supply_requests.length}건</div></div>
+        <div class="kpi"><div class="kpi-lbl">포털 문의</div><div class="kpi-val ${d.inquiries.length ? 'neg' : ''}">${d.inquiries.length}건</div></div>
+      </div>
+      ${section('🔧 AS 요청', d.as_requests, x =>
+        `<b>${x.branch}</b> · ${x.title} ${x.priority === 'urgent' ? '<span class="bdg neg">긴급</span>' : ''}
+         <span style="color:var(--ink3);font-size:11.5px">${x.created_name || ''} · ${(x.created_at||'').slice(0,16)}</span>`, 'as')}
+      ${section('📦 비품 요청', d.supply_requests, x =>
+        `<b>${x.branch}</b> · ${x.item_name} ${x.quantity}${x.unit || '개'}
+         <span style="color:var(--ink3);font-size:11.5px">${x.created_name || ''} · ${(x.created_at||'').slice(0,16)}</span>`, 'supply')}
+      ${section('📨 포털 문의', d.inquiries, x =>
+        `${inqLbl[x.type] || x.type} · <b>${x.name}</b> (${x.phone}) · ${x.branch || '지점 미입력'}
+         <span style="color:var(--ink3);font-size:11.5px">${x.message || ''} · ${(x.created_at||'').slice(0,16)}</span>`, 'inquiry')}`;
+  }
+
+  window.resolveReport = async function (kind, id) {
+    const r = await api('/api/reports/resolve', { method: 'POST',
+      body: JSON.stringify({ kind, id }) });
+    if (r && r.ok) { showToast('✅ 처리 완료'); loadReports(); }
   };
 
   // ── 월별 매출 직접 입력 ────────────────────────────────────
@@ -419,6 +607,7 @@
       <div class="filter-bar">${ymFilter(loadAttendance)}
         <select id="f-att-br"><option value="">전체 지점</option>
           ${branches.map(b => `<option ${b === attBranch ? 'selected' : ''}>${b}</option>`).join('')}</select>
+        <button class="xbtn" onclick="dlAttendance()">📥 Excel</button>
       </div>
       <div id="att-body"><div class="empty">로드 중…</div></div>`;
     document.getElementById('f-att-br').addEventListener('change', e => { attBranch = e.target.value; loadAttendance(); });
@@ -459,6 +648,22 @@
             </tr>`).join('')}</tbody>
           </table></div></div>`;
   }
+
+  window.dlAttendance = async function () {
+    const r = await api(`/api/attendance?year=${selYear}&month=${selMonth}&branch=${encodeURIComponent(attBranch)}`);
+    if (!r || !r.ok) return;
+    const rows = await r.json();
+    if (!rows.length) { showToast('데이터가 없습니다', 'err'); return; }
+    const fmtMin = m => m ? `${Math.floor(m/60)}:${String(m%60).padStart(2,'0')}` : '';
+    const csv = '﻿날짜,지점,이름,출근,퇴근,근무시간,휴게,상태\n' + rows.map(x =>
+      [x.work_date, x.branch || '', x.name, x.clock_in || '', x.clock_out || '',
+       fmtMin(x.work_minutes), fmtMin(x.break_minutes),
+       x.status === 'late' ? '지각' : '정상'].join(',')).join('\n');
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    a.download = `출퇴근현황_${selYear}년${String(selMonth).padStart(2,'0')}월${attBranch ? '_' + attBranch : ''}.csv`;
+    a.click();
+  };
 
   /* ════ 인사/급여 (직원 CRUD + 급여계산 + 결과) ═════════════ */
   const TYPE_LBL = { insured: '4대보험', freelance: '프리랜서', business: '사업자', hourly: '시급제' };
@@ -793,7 +998,7 @@
   window.upBank = async function () {
     const bank = document.getElementById('bank-kind').value;
     const d = await doUpload('/api/upload/bank', 'bank-file', { bank });
-    if (d) upResult(`✅ 통장내역 ${d.count}건 저장 (자동분류 ${d.auto}건 / 미분류 ${d.review}건)` +
+    if (d) upResult(`✅ 통장내역 ${d.count}건 저장 (자동분류 ${d.auto}건${d.ai ? ' / AI ' + d.ai + '건' : ''} / 미분류 ${d.review}건)` +
       (d.review ? ' — 설정 → 미분류 검토에서 확인하세요' : ''));
   };
   window.upPayroll = async function () {
@@ -817,6 +1022,9 @@
       <div class="filter-bar" style="gap:6px">
         <button class="xbtn ${setTab === 'review' ? 'primary' : ''}" onclick="setTabGo('review')">미분류 검토</button>
         <button class="xbtn ${setTab === 'rules' ? 'primary' : ''}" onclick="setTabGo('rules')">규칙 목록</button>
+        <button class="xbtn ${setTab === 'ai' ? 'primary' : ''}" onclick="setTabGo('ai')">🤖 AI 설정</button>
+        ${user.role === 'admin' ? `<button class="xbtn ${setTab === 'users' ? 'primary' : ''}"
+          onclick="setTabGo('users')">👤 계정 관리</button>` : ''}
         ${setTab === 'review' ? ymFilter(loadSettings) : ''}
       </div>
       <div id="set-body"><div class="empty">로드 중…</div></div>`;
@@ -828,6 +1036,59 @@
   async function loadSettings() {
     const body = document.getElementById('set-body');
     body.innerHTML = '<div class="empty">로드 중…</div>';
+
+    if (setTab === 'ai') {
+      const r = await api('/api/ai/key');
+      const d = r && r.ok ? await r.json() : { masked: '', set: false };
+      body.innerHTML = `
+        <div class="card" style="padding:18px 20px;max-width:560px">
+          <div style="font-weight:800;margin-bottom:6px">🤖 OpenAI API 설정</div>
+          <div style="font-size:12.5px;color:var(--ink3);margin-bottom:14px">
+            API 키를 설정하면 통장 업로드 시 미분류 거래를 AI가 자동 분류합니다.</div>
+          <div style="font-size:13px;margin-bottom:10px">현재: <b>${d.set ? d.masked : '미설정'}</b></div>
+          <div style="display:flex;gap:8px">
+            <input id="ai-key" type="password" placeholder="sk-proj-..." class="cell-in" style="flex:1">
+            <button class="xbtn primary" onclick="saveAiKey()">저장</button>
+          </div></div>`;
+      return;
+    }
+
+    if (setTab === 'users') {
+      const r = await api('/api/users');
+      if (!r || !r.ok) { body.innerHTML = '<div class="empty">관리자 전용입니다</div>'; return; }
+      const users = await r.json();
+      body.innerHTML = `
+        <div class="card" style="padding:18px 20px;margin-bottom:14px">
+          <div style="font-weight:800;margin-bottom:10px">➕ 새 계정</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="nu-id" placeholder="아이디" class="cell-in" style="width:130px">
+            <input id="nu-name" placeholder="이름" class="cell-in" style="width:110px">
+            <input id="nu-pw" type="password" placeholder="비밀번호 (8자+)" class="cell-in" style="width:150px">
+            <select id="nu-role" class="cell-in"><option value="user">사용자</option><option value="admin">관리자</option></select>
+            <button class="xbtn primary" onclick="addUser()">생성</button>
+          </div></div>
+        <div class="card" style="padding:18px 20px;margin-bottom:14px">
+          <div style="font-weight:800;margin-bottom:10px">🔑 비밀번호 변경</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input id="cp-id" placeholder="아이디" class="cell-in" style="width:130px">
+            <input id="cp-pw" type="password" placeholder="새 비밀번호 (8자+)" class="cell-in" style="width:160px">
+            <button class="xbtn primary" onclick="changePw()">변경</button>
+          </div></div>
+        <div class="card"><div class="card-head">전체 사용자 (${users.length}명)</div>
+          <div style="overflow-x:auto;padding:8px 0 4px">
+            <table class="tbl">
+              <thead><tr><th>아이디</th><th>이름</th><th>권한</th><th>생성일</th><th></th></tr></thead>
+              <tbody>${users.map(u => `<tr>
+                <td style="text-align:left"><b>${u.username}</b></td>
+                <td style="text-align:left">${u.name}</td>
+                <td style="text-align:left">${u.role === 'admin' ? '🔴 관리자' : '🔵 사용자'}</td>
+                <td>${(u.created_at || '').slice(0, 10)}</td>
+                <td>${u.username !== 'admin'
+                  ? `<button class="xbtn sm" onclick="delUser(${u.id},'${u.username}')">🗑️</button>` : '—'}</td>
+              </tr>`).join('')}</tbody>
+            </table></div></div>`;
+      return;
+    }
 
     if (setTab === 'review') {
       const r = await api(`/api/rules/transactions?year=${selYear}&month=${selMonth}&unclassified=1`);
@@ -921,6 +1182,46 @@
     if (!confirm('이 규칙을 삭제할까요?')) return;
     const r = await api(`/api/rules/${id}`, { method: 'DELETE' });
     if (r && r.ok) { showToast('삭제 완료'); loadSettings(); }
+  };
+
+  window.saveAiKey = async function () {
+    const key = document.getElementById('ai-key').value.trim();
+    const r = await api('/api/ai/key', { method: 'POST', body: JSON.stringify({ key }) });
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (r && r.ok) { showToast('✅ API 키 저장 완료'); loadSettings(); }
+    else showToast(d.detail || '저장 실패', 'err');
+  };
+
+  window.addUser = async function () {
+    const body = {
+      username: document.getElementById('nu-id').value.trim(),
+      name: document.getElementById('nu-name').value.trim(),
+      password: document.getElementById('nu-pw').value,
+      role: document.getElementById('nu-role').value,
+    };
+    if (!body.username || !body.password) { showToast('아이디와 비밀번호를 입력하세요', 'err'); return; }
+    const r = await api('/api/users', { method: 'POST', body: JSON.stringify(body) });
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (r && r.ok) { showToast('✅ 계정 생성 완료'); loadSettings(); }
+    else showToast(d.detail || '생성 실패', 'err');
+  };
+
+  window.delUser = async function (id, username) {
+    if (!confirm(`'${username}' 계정을 삭제할까요?`)) return;
+    const r = await api(`/api/users/${id}`, { method: 'DELETE' });
+    if (r && r.ok) { showToast('삭제 완료'); loadSettings(); }
+  };
+
+  window.changePw = async function () {
+    const body = {
+      username: document.getElementById('cp-id').value.trim(),
+      new_password: document.getElementById('cp-pw').value,
+    };
+    if (!body.username || !body.new_password) { showToast('아이디와 새 비밀번호를 입력하세요', 'err'); return; }
+    const r = await api('/api/users/password', { method: 'POST', body: JSON.stringify(body) });
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (r && r.ok) showToast('✅ 비밀번호 변경 완료');
+    else showToast(d.detail || '변경 실패', 'err');
   };
 
   loadMeta().then(renderShell);

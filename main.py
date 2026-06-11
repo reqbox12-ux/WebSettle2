@@ -340,10 +340,40 @@ async def api_upload_bank(request: Request, year: int = Form(...), month: int = 
         if df.empty:
             raise HTTPException(400, "인식 가능한 시트가 없습니다")
         df = classify_transactions(df, bank)
+
+        # AI 자동분류 (API 키 설정 시)
+        ai_cnt = 0
+        try:
+            from modules.ai_classifier import ai_classify_batch, load_api_key
+            from shared.config import BRANCH_LIST, ALL_CATEGORIES
+            api_key = load_api_key()
+            unclf = df[df["needs_review"] == 1]
+            if api_key and not unclf.empty:
+                tx_list = unclf[["description", "counterpart", "deposit", "withdrawal"]].to_dict("records")
+                for item in ai_classify_batch(tx_list, BRANCH_LIST, ALL_CATEGORIES, api_key):
+                    try:
+                        idx  = unclf.index[item["id"]]
+                        br_  = item.get("branch", "")
+                        cat_ = item.get("category", "")
+                        conf = float(item.get("confidence", 0))
+                        if br_ or cat_:
+                            df.at[idx, "branch"] = br_
+                            df.at[idx, "category"] = cat_
+                            df.at[idx, "classification_source"] = "ai"
+                            df.at[idx, "is_excluded"] = 1 if cat_ == "제외" else 0
+                            if conf >= 0.75 and br_ and cat_:
+                                df.at[idx, "needs_review"] = 0
+                                ai_cnt += 1
+                    except Exception:
+                        pass
+        except Exception:
+            pass
+
         df = recalc_vat(df)
         upsert_bank_transactions(df, bank, year, month)
         return {"ok": True, "count": len(df),
                 "auto": int((df.needs_review == 0).sum()),
+                "ai": ai_cnt,
                 "review": int(df.needs_review.sum())}
     except HTTPException:
         raise
@@ -495,11 +525,14 @@ async def api_branch_list(request: Request):
 class BranchBody(BaseModel):
     id:                int = 0
     name:              str
+    contract_date:     str = ""
+    termination_date:  str = ""
     address:           str = ""
     lat:               float | None = None
     lng:               float | None = None
     attendance_radius: int = 300
     is_active:         int = 1
+    note:              str = ""
 
 
 @app.post("/api/branch/upsert")
@@ -511,6 +544,28 @@ async def api_branch_upsert(request: Request, body: BranchBody):
         data.pop("id")
     rid = upsert_branch(data)
     return {"id": rid}
+
+
+@app.get("/api/geocode")
+async def api_geocode(request: Request, address: str):
+    """주소 → 위도/경도 (Nominatim, API 키 불필요)"""
+    require_auth(request)
+    import urllib.request as ur
+    import urllib.parse as up
+    import json as _json
+    import re as _re
+    clean = _re.sub(r"\(.*?\)", "", address).strip()
+    try:
+        url = ("https://nominatim.openstreetmap.org/search"
+               f"?q={up.quote(clean)}&format=json&limit=1&countrycodes=kr")
+        req = ur.Request(url, headers={"User-Agent": "WebSettle2-LaonSports/1.0"})
+        with ur.urlopen(req, timeout=7) as resp:
+            rows = _json.loads(resp.read())
+        if rows:
+            return {"lat": float(rows[0]["lat"]), "lng": float(rows[0]["lon"])}
+    except Exception:
+        pass
+    raise HTTPException(404, f"'{clean}' 좌표를 찾지 못했습니다. 도로명 주소만 간략히 입력해 보세요.")
 
 
 # ── 월별 매출 직접 입력 ────────────────────────────────────────
@@ -727,6 +782,151 @@ async def api_upload_insurance(
     saved, unmatched = save_insurance_actuals(year, month, merged)
     return {"ok": True, "saved": saved, "matched": saved - unmatched,
             "unmatched": unmatched, "errors": [str(e) for e in errs[:5]]}
+
+
+# ── 계정 관리 (admin 전용) ─────────────────────────────────────
+def _require_admin(request: Request) -> dict:
+    user = require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(403, "관리자 전용 기능입니다")
+    return user
+
+
+@app.get("/api/users")
+async def api_users(request: Request):
+    _require_admin(request)
+    from modules.auth import get_all_users
+    return get_all_users()
+
+
+class UserBody(BaseModel):
+    username: str
+    name:     str = ""
+    password: str
+    role:     str = "user"
+
+
+@app.post("/api/users")
+async def api_user_add(request: Request, body: UserBody):
+    _require_admin(request)
+    from modules.auth import add_user
+    if len(body.password) < 8:
+        raise HTTPException(400, "비밀번호는 8자 이상이어야 합니다")
+    if not add_user(body.username, body.name or body.username, body.password, body.role):
+        raise HTTPException(400, "계정 생성 실패 (중복 아이디일 수 있음)")
+    return {"ok": True}
+
+
+@app.delete("/api/users/{user_id}")
+async def api_user_del(request: Request, user_id: int):
+    _require_admin(request)
+    from modules.auth import delete_user
+    delete_user(user_id)
+    return {"ok": True}
+
+
+class PwBody(BaseModel):
+    username:     str
+    new_password: str
+
+
+@app.post("/api/users/password")
+async def api_user_pw(request: Request, body: PwBody):
+    _require_admin(request)
+    from modules.auth import change_password
+    if len(body.new_password) < 8:
+        raise HTTPException(400, "비밀번호는 8자 이상이어야 합니다")
+    if not change_password(body.username, body.new_password):
+        raise HTTPException(400, "비밀번호 변경 실패")
+    return {"ok": True}
+
+
+# ── AI 설정 (OpenAI 키) ───────────────────────────────────────
+@app.get("/api/ai/key")
+async def api_ai_key(request: Request):
+    _require_admin(request)
+    from modules.ai_classifier import load_api_key
+    key = load_api_key() or ""
+    return {"masked": (f"sk-...{key[-4:]}" if len(key) > 8 else ("설정됨" if key else "")),
+            "set": bool(key)}
+
+
+class AiKeyBody(BaseModel):
+    key: str
+
+
+@app.post("/api/ai/key")
+async def api_ai_key_save(request: Request, body: AiKeyBody):
+    _require_admin(request)
+    if not body.key.startswith("sk-"):
+        raise HTTPException(400, "올바른 OpenAI API 키 형식이 아닙니다")
+    from modules.ai_classifier import save_api_key
+    save_api_key(body.key)
+    return {"ok": True}
+
+
+# ── 지점 보고 (포털 연동: AS·비품·문의·오늘 출근) ──────────────
+@app.get("/api/reports")
+async def api_reports(request: Request):
+    require_auth(request)
+    from modules.db import get_conn
+    from datetime import datetime as _dt
+    conn  = get_conn()
+    today = _dt.now().strftime("%Y-%m-%d")
+    out = {"as_requests": [], "supply_requests": [], "inquiries": [], "attendance_today": 0}
+    try:
+        cur = conn.execute(
+            "SELECT id, branch, title, priority, created_name, created_at "
+            "FROM as_requests WHERE status='open' ORDER BY created_at DESC LIMIT 50")
+        out["as_requests"] = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+    except Exception:
+        pass
+    try:
+        cur = conn.execute(
+            "SELECT id, branch, item_name, quantity, unit, created_name, created_at "
+            "FROM supply_requests WHERE status='pending' ORDER BY created_at DESC LIMIT 50")
+        out["supply_requests"] = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+    except Exception:
+        pass
+    try:
+        cur = conn.execute(
+            "SELECT id, type, name, phone, branch, message, created_at "
+            "FROM portal_inquiries WHERE status='open' ORDER BY created_at DESC LIMIT 50")
+        out["inquiries"] = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+    except Exception:
+        pass
+    try:
+        out["attendance_today"] = conn.execute(
+            "SELECT COUNT(*) FROM attendance WHERE work_date=? AND clock_in IS NOT NULL",
+            (today,)).fetchone()[0]
+    except Exception:
+        pass
+    conn.close()
+    return out
+
+
+class ResolveBody(BaseModel):
+    kind: str   # 'as' | 'supply' | 'inquiry'
+    id:   int
+
+
+@app.post("/api/reports/resolve")
+async def api_reports_resolve(request: Request, body: ResolveBody):
+    require_auth(request)
+    from modules.db import get_conn
+    conn = get_conn()
+    try:
+        if body.kind == "as":
+            conn.execute("UPDATE as_requests SET status='done' WHERE id=?", (body.id,))
+        elif body.kind == "supply":
+            conn.execute("UPDATE supply_requests SET status='approved' WHERE id=?", (body.id,))
+        elif body.kind == "inquiry":
+            conn.execute("UPDATE portal_inquiries SET status='done', "
+                         "resolved_at=datetime('now','localtime') WHERE id=?", (body.id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return {"ok": True}
 
 
 # ── 백업 / 복원 ───────────────────────────────────────────────
