@@ -135,6 +135,20 @@ body {
 /* 필터바 select 공통 */
 .filter-bar select { max-width:200px; }
 
+/* ── 인라인 셀 입력 ──────────────────────────────────────────── */
+.cell-in { padding:6px 8px; border:1.5px solid var(--bds); border-radius:7px;
+  font-size:12.5px; background:transparent; color:var(--ink);
+  font-feature-settings:'tnum' 1; }
+.cell-in:focus { outline:none; border-color:var(--red); }
+
+/* ── 직원 폼 ─────────────────────────────────────────────────── */
+.emp-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; }
+.emp-grid label { display:flex; flex-direction:column; gap:5px;
+  font-size:11.5px; font-weight:700; color:var(--ink2); }
+.emp-grid input, .emp-grid select { padding:9px 11px; border:1.5px solid var(--bds);
+  border-radius:8px; font-size:13px; background:var(--sf); color:var(--ink); }
+@media (max-width:767px) { .emp-grid { grid-template-columns:repeat(2,1fr); } }
+
 /* ── 모바일 ─────────────────────────────────────────────────── */
 @media (max-width:767px) {
   .sidebar { display:none; }

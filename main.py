@@ -469,10 +469,316 @@ async def api_rules_del(request: Request, rule_id: int):
 
 @app.get("/api/meta")
 async def api_meta(request: Request):
-    """지점 목록 + 계정과목 목록 (분류 UI용)"""
+    """지점 목록 + 계정과목 목록 + 미분류 건수"""
     require_auth(request)
     from shared.config import BRANCH_LIST, ALL_CATEGORIES
-    return {"branches": BRANCH_LIST, "categories": ALL_CATEGORIES}
+    from modules.db import get_conn
+    unclf = 0
+    try:
+        conn = get_conn()
+        unclf = conn.execute(
+            "SELECT COUNT(*) FROM bank_transactions WHERE needs_review=1").fetchone()[0]
+        conn.close()
+    except Exception:
+        pass
+    return {"branches": BRANCH_LIST, "categories": ALL_CATEGORIES, "unclassified": unclf}
+
+
+# ── 지점 관리 (좌표/주소/반경) ─────────────────────────────────
+@app.get("/api/branch/list")
+async def api_branch_list(request: Request):
+    require_auth(request)
+    from domains.branch.db import get_all_branches
+    return get_all_branches()
+
+
+class BranchBody(BaseModel):
+    id:                int = 0
+    name:              str
+    address:           str = ""
+    lat:               float | None = None
+    lng:               float | None = None
+    attendance_radius: int = 300
+    is_active:         int = 1
+
+
+@app.post("/api/branch/upsert")
+async def api_branch_upsert(request: Request, body: BranchBody):
+    require_auth(request)
+    from domains.branch.db import upsert_branch
+    data = body.dict()
+    if not data["id"]:
+        data.pop("id")
+    rid = upsert_branch(data)
+    return {"id": rid}
+
+
+# ── 월별 매출 직접 입력 ────────────────────────────────────────
+_BMR_COLS = ["dogeub", "pt_sales", "gx_sales", "cafe_sales",
+             "golf_sales", "facility_fee", "cafe_labor", "other_sales"]
+
+
+@app.get("/api/branch/monthly-revenue")
+async def api_bmr_get(request: Request, year: int, month: int):
+    require_auth(request)
+    from domains.branch.db import get_branch_monthly_revenue, get_active_branch_names
+    saved = {r["branch"]: r for r in get_branch_monthly_revenue(year, month)}
+    out = []
+    for br in get_active_branch_names():
+        row = saved.get(br, {})
+        out.append({"branch": br,
+                    **{c: int(row.get(c, 0) or 0) for c in _BMR_COLS},
+                    "note": row.get("note", "") or ""})
+    return out
+
+
+class BmrBody(BaseModel):
+    year:   int
+    month:  int
+    branch: str
+    data:   dict
+
+
+@app.post("/api/branch/monthly-revenue")
+async def api_bmr_save(request: Request, body: BmrBody):
+    require_auth(request)
+    from domains.branch.db import upsert_branch_monthly_revenue
+    data = {c: int(body.data.get(c, 0) or 0) for c in _BMR_COLS}
+    data["note"] = str(body.data.get("note", ""))[:200]
+    upsert_branch_monthly_revenue(body.year, body.month, body.branch, data)
+    return {"ok": True}
+
+
+# ── 정산서 Excel (지점별 손익계산서) ───────────────────────────
+@app.get("/api/branch/pnl/excel")
+async def api_pnl_excel(request: Request, year: int, month: int, branches: str):
+    require_auth(request)
+    import io
+    import pandas as pd
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+    df = _summary(year, month)
+    if df is None or df.empty:
+        raise HTTPException(404, "데이터가 없습니다")
+    br_list = [b for b in branches.split(",") if b.strip()]
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        for br in br_list:
+            m = df[df.branch == br]
+            if m.empty:
+                continue
+            d = m.iloc[0].fillna(0).to_dict()
+            rows = [
+                ("매출", "카드 공급가액",  int(d.get("카드공급가액", 0))),
+                ("",     "카드 수수료",    -int(d.get("카드수수료", 0))),
+                ("",     "카드 실수령",     int(d.get("카드실수령", 0))),
+                ("",     "현금 공급가액",   int(d.get("현금공급가액", 0))),
+                ("",     "직접입력 매출",   int(d.get("수동입력매출", 0))),
+                ("",     "▶ 총매출",        int(d.get("총매출", 0))),
+                ("지출", "급여",            int(d.get("급여", 0))),
+                ("",     "4대보험(직원)",    int(d.get("4대보험료_직원", 0))),
+                ("",     "4대보험(본사)",    int(d.get("4대보험_본사", 0))),
+                ("",     "소득세·지방세",    int(d.get("소득세지방세", 0))),
+                ("",     "프리랜서",         int(d.get("프리랜서", 0))),
+                ("",     "인건비합계",       int(d.get("인건비합계", 0))),
+                ("",     "기타지출",         int(d.get("기타지출", 0))),
+                ("",     "부가세합계",       int(d.get("부가세합계", 0))),
+                ("",     "▶ 총지출",         int(d.get("총지출", 0))),
+                ("손익", "▶ 순손익",         int(d.get("손익", 0))),
+                ("",     "이익률(%)",        float(d.get("이익률", 0))),
+            ]
+            pd.DataFrame(rows, columns=["구분", "항목", "금액"]).to_excel(
+                w, sheet_name=br[:31], index=False)
+    buf.seek(0)
+    fn = quote(f"정산서_{year}년{month:02d}월.xlsx")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
+
+
+# ── 직원 CRUD ─────────────────────────────────────────────────
+class EmployeeBody(BaseModel):
+    id:          int = 0
+    name:        str
+    branch:      str = ""
+    emp_type:    str = "insured"
+    base_salary: int = 0
+    dependents:  int = 1
+    meal:        int = 0
+    transport:   int = 0
+    email:       str = ""
+    phone:       str = ""
+    work_start:  str = "09:00"
+    work_end:    str = "18:00"
+    hourly_rate: int = 0
+    join_date:   str = ""
+    note:        str = ""
+
+
+@app.post("/api/employees")
+async def api_emp_upsert(request: Request, body: EmployeeBody):
+    require_auth(request)
+    from domains.payroll.db import upsert_employee, create_employee_account, get_employee_account
+    data = body.dict()
+    data["is_active"] = 1
+    if not data["id"]:
+        data.pop("id")
+    eid = upsert_employee(data)
+    # 전화번호 있으면 포털 계정 자동 생성
+    phone = body.phone.replace("-", "").replace(" ", "")
+    acc_msg = ""
+    if len(phone) >= 8 and not get_employee_account(eid):
+        ok, _ = create_employee_account(eid, phone, phone[-4:])
+        if ok:
+            acc_msg = f"포털 계정 생성: {phone} / 초기PW {phone[-4:]}"
+    return {"id": eid, "account": acc_msg}
+
+
+@app.delete("/api/employees/{emp_id}")
+async def api_emp_delete(request: Request, emp_id: int):
+    require_auth(request)
+    from domains.payroll.db import delete_employee
+    delete_employee(emp_id)
+    return {"ok": True}
+
+
+# ── 급여 계산 ─────────────────────────────────────────────────
+@app.get("/api/payroll/entries")
+async def api_payroll_entries(request: Request, year: int, month: int):
+    require_auth(request)
+    from domains.payroll.db import get_payroll_entries
+    return get_payroll_entries(year, month)
+
+
+class PayrollConfirmBody(BaseModel):
+    year:     int
+    month:    int
+    payments: dict   # {employee_id(str): gross(int)}
+
+
+@app.post("/api/payroll/confirm")
+async def api_payroll_confirm(request: Request, body: PayrollConfirmBody):
+    """급여 확정: 기존 삭제 → 직원 유형별 계산 → 저장 (공단 실납부액 자동 적용)"""
+    require_auth(request)
+    from domains.payroll.db import (
+        get_all_employees, delete_payroll_entries, save_payroll_entry,
+        get_insurance_actual,
+    )
+    from domains.payroll.calculation.service import calc_insured, calc_freelance, calc_business
+    from domains.payroll.insurance.service import apply_insurance_actuals
+
+    emps = {e["id"]: e for e in get_all_employees()}
+    delete_payroll_entries(body.year, body.month)
+    ok = actual_applied = 0
+    errors = []
+    for emp_id_s, gross in body.payments.items():
+        emp_id = int(emp_id_s)
+        gross  = int(gross or 0)
+        if gross <= 0 or emp_id not in emps:
+            continue
+        emp = emps[emp_id]
+        try:
+            if emp["emp_type"] == "insured":
+                entry  = calc_insured(emp, body.year, body.month, override_gross=gross)
+                actual = get_insurance_actual(body.year, body.month, emp_id)
+                if actual:
+                    entry = apply_insurance_actuals(entry, actual)
+                    actual_applied += 1
+            elif emp["emp_type"] == "business":
+                entry = calc_business(emp, body.year, body.month, gross)
+            else:
+                entry = calc_freelance(emp, body.year, body.month, gross)
+            if save_payroll_entry(entry):
+                ok += 1
+            else:
+                errors.append(f"{emp['name']} 저장 실패")
+        except Exception as e:
+            errors.append(f"{emp['name']}: {e}")
+    return {"ok": ok, "actual_applied": actual_applied, "errors": errors}
+
+
+# ── 4대보험 고지내역 업로드 ────────────────────────────────────
+@app.post("/api/upload/insurance")
+async def api_upload_insurance(
+    request: Request, year: int = Form(...), month: int = Form(...),
+    pension: UploadFile = File(None), health: UploadFile = File(None),
+    employ:  UploadFile = File(None),
+):
+    require_auth(request)
+    from domains.payroll.insurance.service import (
+        parse_pension, parse_health, parse_employment, merge_insurance_records,
+    )
+    from domains.payroll.db import save_insurance_actuals
+    import io
+    pension_recs = health_recs = employ_recs = []
+    errs = []
+    if pension and pension.filename:
+        recs, e = parse_pension(io.BytesIO(await pension.read()))
+        pension_recs = recs; errs += e
+    if health and health.filename:
+        recs, e = parse_health(io.BytesIO(await health.read()))
+        health_recs = recs; errs += e
+    if employ and employ.filename:
+        recs, e = parse_employment(io.BytesIO(await employ.read()))
+        employ_recs = recs; errs += e
+    merged = merge_insurance_records(pension_recs, health_recs, employ_recs)
+    if not merged:
+        raise HTTPException(400, "파싱된 내역이 없습니다. " + " / ".join(map(str, errs[:3])))
+    saved, unmatched = save_insurance_actuals(year, month, merged)
+    return {"ok": True, "saved": saved, "matched": saved - unmatched,
+            "unmatched": unmatched, "errors": [str(e) for e in errs[:5]]}
+
+
+# ── 백업 / 복원 ───────────────────────────────────────────────
+_BACKUP_DIR = WEBAPP_DIR / "backups"
+_DB_FILE    = WEBAPP_DIR / "data" / "settlement.db"
+
+
+@app.get("/api/backups")
+async def api_backups(request: Request):
+    require_auth(request)
+    _BACKUP_DIR.mkdir(exist_ok=True)
+    out = []
+    for p in sorted(_BACKUP_DIR.glob("settlement_*.db"), reverse=True):
+        out.append({"name": p.name, "size_mb": round(p.stat().st_size / 1048576, 1),
+                    "ts": p.stem.replace("settlement_", "")})
+    return out
+
+
+@app.post("/api/backups")
+async def api_backup_create(request: Request):
+    require_auth(request)
+    import shutil
+    from datetime import datetime as _dt
+    _BACKUP_DIR.mkdir(exist_ok=True)
+    ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+    shutil.copy2(_DB_FILE, _BACKUP_DIR / f"settlement_{ts}.db")
+    # 최근 7개 유지
+    backups = sorted(_BACKUP_DIR.glob("settlement_*.db"), reverse=True)
+    for old in backups[7:]:
+        old.unlink()
+    return {"ok": True, "name": f"settlement_{ts}.db"}
+
+
+class RestoreBody(BaseModel):
+    name: str
+
+
+@app.post("/api/backups/restore")
+async def api_backup_restore(request: Request, body: RestoreBody):
+    require_auth(request)
+    import shutil
+    import re as _re
+    from datetime import datetime as _dt
+    if not _re.fullmatch(r"settlement_\d{8}_\d{6}\.db", body.name):
+        raise HTTPException(400, "잘못된 백업 파일명")
+    src = _BACKUP_DIR / body.name
+    if not src.exists():
+        raise HTTPException(404, "백업 파일이 없습니다")
+    broken = _BACKUP_DIR / f"broken_{_dt.now().strftime('%Y%m%d_%H%M%S')}.db"
+    shutil.copy2(_DB_FILE, broken)
+    shutil.copy2(src, _DB_FILE)
+    return {"ok": True, "msg": f"{body.name} 복원 완료 — 현재 DB는 {broken.name}으로 보존됨"}
 
 
 if __name__ == "__main__":

@@ -65,12 +65,22 @@
       <select id="f-mn">${Array.from({length:12},(_,i)=>i+1).map(m => `<option value="${m}" ${m === selMonth ? 'selected' : ''}>${m}월</option>`).join('')}</select>`;
   }
 
+  // ── 테마 ───────────────────────────────────────────────────
+  const savedTheme = localStorage.getItem('ws2_theme');
+  if (savedTheme) document.documentElement.setAttribute('data-theme', savedTheme);
+  window.toggleTheme = function () {
+    const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+    document.documentElement.setAttribute('data-theme', cur);
+    localStorage.setItem('ws2_theme', cur);
+    renderShell();
+  };
+
   // ── 페이지 정의 ────────────────────────────────────────────
   const PAGES = {
     dashboard:  { label: '대시보드',   icon: 'layout-grid',  sec: 'WORKSPACE' },
     branch:     { label: '지점',       icon: 'building-2',   sec: '관리' },
+    payroll:    { label: '인사/급여',  icon: 'credit-card',  sec: '관리' },
     attendance: { label: '출퇴근 현황', icon: 'clock',        sec: '관리' },
-    employees:  { label: '직원',       icon: 'users',        sec: '관리' },
     upload:     { label: '데이터 업로드', icon: 'upload',     sec: '데이터' },
     settings:   { label: '설정',       icon: 'settings',     sec: '데이터' },
   };
@@ -78,11 +88,16 @@
 
   // ── 셸 렌더 ────────────────────────────────────────────────
   function renderShell() {
+    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+    const unclf  = META.unclassified || 0;
     let nav = '', lastSec = '';
     for (const [k, c] of Object.entries(PAGES)) {
       if (c.sec !== lastSec) { nav += `<div class="sb-sec">${c.sec}</div>`; lastSec = c.sec; }
+      const bdg = (k === 'settings' && unclf > 0)
+        ? `<span style="margin-left:auto;background:var(--red);color:#fff;border-radius:999px;
+            font-size:10px;font-weight:700;padding:1px 7px">${unclf}</span>` : '';
       nav += `<div class="sb-item ${k === currentPage ? 'on' : ''}" onclick="nav('${k}')">
-        <i data-lucide="${c.icon}"></i><span>${c.label}</span></div>`;
+        <i data-lucide="${c.icon}"></i><span>${c.label}</span>${bdg}</div>`;
     }
     document.getElementById('app-root').innerHTML = `
       <div class="app">
@@ -92,12 +107,13 @@
           <div class="sb-nav">${nav}</div>
           <div class="sb-foot">
             ${user.name} (${user.role === 'admin' ? '관리자' : '사용자'})<br>
+            <a onclick="toggleTheme()">${isDark ? '☀️ 라이트 모드' : '🌙 다크 모드'}</a> ·
             <a onclick="logout()">🚪 로그아웃</a>
           </div>
         </nav>
         <main class="main" id="page-content"></main>
         <nav class="bnav">
-          ${Object.entries(PAGES).slice(0, 5).map(([k, c]) => `
+          ${Object.entries(PAGES).filter(([k]) => k !== 'attendance').map(([k, c]) => `
             <div class="${k === currentPage ? 'on' : ''}" onclick="nav('${k}')">
               <i data-lucide="${c.icon}"></i><span>${c.label}</span></div>`).join('')}
         </nav>
@@ -111,7 +127,7 @@
   function renderPage() {
     const el = document.getElementById('page-content');
     ({ dashboard: renderDashboard, branch: renderBranch, attendance: renderAttendance,
-       employees: renderEmployees, upload: renderUpload, settings: renderSettings,
+       payroll: renderPayroll, upload: renderUpload, settings: renderSettings,
     }[currentPage] || (() => { el.innerHTML = '<div class="empty">준비 중</div>'; }))(el);
   }
 
@@ -206,23 +222,124 @@
     }
   }
 
-  /* ════ 지점 상세 ═══════════════════════════════════════════ */
+  /* ════ 지점 (상세/관리/매출입력) ═══════════════════════════ */
   let selBranch = '';
+  let brTab = 'detail';
 
   async function renderBranch(el) {
     const r = await api('/api/branches');
     const branches = r && r.ok ? await r.json() : [];
     if (!selBranch && branches.length) selBranch = branches[0];
     el.innerHTML = `
-      <div class="ph"><div class="ph-title">지점 상세</div>
-        <div class="ph-sub">손익계산서 · 목표 매출</div></div>
-      <div class="filter-bar">${ymFilter(loadBranch)}
-        <select id="f-br">${branches.map(b => `<option ${b === selBranch ? 'selected' : ''}>${b}</option>`).join('')}</select>
+      <div class="ph"><div class="ph-title">지점</div>
+        <div class="ph-sub">손익계산서 · 지점 관리 · 월별 매출 입력</div></div>
+      <div class="filter-bar" style="gap:6px">
+        <button class="xbtn ${brTab === 'detail' ? 'primary' : ''}" onclick="brTabGo('detail')">📊 상세</button>
+        <button class="xbtn ${brTab === 'mgmt' ? 'primary' : ''}" onclick="brTabGo('mgmt')">🏢 지점 관리</button>
+        <button class="xbtn ${brTab === 'revenue' ? 'primary' : ''}" onclick="brTabGo('revenue')">📝 매출 입력</button>
       </div>
+      ${brTab !== 'mgmt' ? `<div class="filter-bar">${ymFilter(loadBranchTab)}
+        ${brTab === 'detail' ? `
+          <select id="f-br">${branches.map(b => `<option ${b === selBranch ? 'selected' : ''}>${b}</option>`).join('')}</select>
+          <button class="xbtn" onclick="dlPnl()">📥 정산서 Excel</button>` : ''}
+      </div>` : ''}
       <div id="br-body"><div class="empty">로드 중…</div></div>`;
-    document.getElementById('f-br').addEventListener('change', e => { selBranch = e.target.value; loadBranch(); });
-    loadBranch();
+    const sel = document.getElementById('f-br');
+    if (sel) sel.addEventListener('change', e => { selBranch = e.target.value; loadBranchTab(); });
+    loadBranchTab();
   }
+
+  window.brTabGo = function (t) { brTab = t; renderBranch(document.getElementById('page-content')); };
+
+  function loadBranchTab() {
+    if (brTab === 'detail')  return loadBranch();
+    if (brTab === 'mgmt')    return loadBranchMgmt();
+    if (brTab === 'revenue') return loadBmr();
+  }
+
+  window.dlPnl = async function () {
+    const r = await api(`/api/branch/pnl/excel?year=${selYear}&month=${selMonth}&branches=${encodeURIComponent(selBranch)}`);
+    if (!r || !r.ok) { showToast('데이터가 없습니다', 'err'); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `정산서_${selBranch}_${selYear}년${String(selMonth).padStart(2,'0')}월.xlsx`;
+    a.click();
+  };
+
+  // ── 지점 관리 ──────────────────────────────────────────────
+  async function loadBranchMgmt() {
+    const body = document.getElementById('br-body');
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const r = await api('/api/branch/list');
+    if (!r || !r.ok) return;
+    const list = await r.json();
+    body.innerHTML = `
+      <div class="card"><div class="card-head">지점 ${list.length}개 — GPS 좌표·출퇴근 반경 관리</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl">
+            <thead><tr><th>지점명</th><th>주소</th><th>위도</th><th>경도</th><th>반경(m)</th><th>활성</th><th></th></tr></thead>
+            <tbody>${list.map(b => `<tr>
+              <td style="text-align:left">${b.name}</td>
+              <td style="text-align:left"><input id="addr-${b.id}" value="${b.address || ''}" class="cell-in" style="width:200px"></td>
+              <td><input id="lat-${b.id}" value="${b.lat ?? ''}" class="cell-in" style="width:90px"></td>
+              <td><input id="lng-${b.id}" value="${b.lng ?? ''}" class="cell-in" style="width:90px"></td>
+              <td><input id="rad-${b.id}" value="${b.attendance_radius || 300}" class="cell-in" style="width:60px"></td>
+              <td>${b.is_active ? '✅' : '—'}</td>
+              <td><button class="xbtn sm primary" onclick="saveBr(${b.id},'${b.name.replace(/'/g,'')}', ${b.is_active||0})">저장</button></td>
+            </tr>`).join('')}</tbody>
+          </table></div></div>
+      <div class="card" style="padding:12px 18px;font-size:12.5px;color:var(--ink3)">
+        💡 좌표는 카카오맵에서 지점 검색 → 우클릭 → '여기 좌표'로 확인할 수 있습니다.
+        반경은 출퇴근 GPS 허용 거리(기본 300m)입니다.</div>`;
+  }
+
+  window.saveBr = async function (id, name, isActive) {
+    const v = (x) => document.getElementById(`${x}-${id}`).value.trim();
+    const body = { id, name, address: v('addr'),
+      lat: v('lat') ? parseFloat(v('lat')) : null,
+      lng: v('lng') ? parseFloat(v('lng')) : null,
+      attendance_radius: parseInt(v('rad')) || 300, is_active: isActive };
+    const r = await api('/api/branch/upsert', { method: 'POST', body: JSON.stringify(body) });
+    if (r && r.ok) showToast(`✅ ${name} 저장 완료`);
+    else showToast('저장 실패', 'err');
+  };
+
+  // ── 월별 매출 직접 입력 ────────────────────────────────────
+  const BMR_COLS = { dogeub:'도급비', pt_sales:'PT매출', gx_sales:'GX매출', cafe_sales:'카페매출',
+    golf_sales:'골프매출', facility_fee:'시설상환비', cafe_labor:'카페인건비', other_sales:'기타매출' };
+
+  async function loadBmr() {
+    const body = document.getElementById('br-body');
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const r = await api(`/api/branch/monthly-revenue?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) return;
+    const rows = await r.json();
+    body.innerHTML = `
+      <div class="card"><div class="card-head">${selYear}년 ${selMonth}월 · 지점별 매출 직접 입력</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl">
+            <thead><tr><th>지점</th>${Object.values(BMR_COLS).map(l => `<th>${l}</th>`).join('')}<th>비고</th><th></th></tr></thead>
+            <tbody>${rows.map((row, i) => `<tr>
+              <td style="text-align:left">${row.branch}</td>
+              ${Object.keys(BMR_COLS).map(c =>
+                `<td><input id="bmr-${i}-${c}" value="${row[c] || 0}" class="cell-in" style="width:90px;text-align:right"></td>`).join('')}
+              <td><input id="bmr-${i}-note" value="${row.note || ''}" class="cell-in" style="width:110px"></td>
+              <td><button class="xbtn sm primary" onclick="saveBmr(${i},'${row.branch.replace(/'/g,'')}')">저장</button></td>
+            </tr>`).join('')}</tbody>
+          </table></div></div>`;
+  }
+
+  window.saveBmr = async function (i, branch) {
+    const data = {};
+    for (const c of Object.keys(BMR_COLS))
+      data[c] = parseInt(document.getElementById(`bmr-${i}-${c}`).value.replace(/,/g, '')) || 0;
+    data.note = document.getElementById(`bmr-${i}-note`).value;
+    const r = await api('/api/branch/monthly-revenue', { method: 'POST',
+      body: JSON.stringify({ year: selYear, month: selMonth, branch, data }) });
+    if (r && r.ok) showToast(`✅ ${branch} 매출 저장`);
+    else showToast('저장 실패', 'err');
+  };
 
   async function loadBranch() {
     const body = document.getElementById('br-body');
@@ -343,27 +460,201 @@
           </table></div></div>`;
   }
 
-  /* ════ 직원 목록 ═══════════════════════════════════════════ */
-  async function renderEmployees(el) {
+  /* ════ 인사/급여 (직원 CRUD + 급여계산 + 결과) ═════════════ */
+  const TYPE_LBL = { insured: '4대보험', freelance: '프리랜서', business: '사업자', hourly: '시급제' };
+  let payTab = 'emps';
+  let empCache = [];
+
+  async function renderPayroll(el) {
     el.innerHTML = `
-      <div class="ph"><div class="ph-title">직원</div>
-        <div class="ph-sub">직원 마스터 조회 · 등록/수정은 기존 ERP(인사/급여)에서</div></div>
-      <div id="emp-body"><div class="empty">로드 중…</div></div>`;
+      <div class="ph"><div class="ph-title">인사/급여</div>
+        <div class="ph-sub">직원 관리 · 급여 계산·확정 · 결과 조회 (명세서 발행은 기존 ERP)</div></div>
+      <div class="filter-bar" style="gap:6px">
+        <button class="xbtn ${payTab === 'emps' ? 'primary' : ''}" onclick="payTabGo('emps')">👥 직원 관리</button>
+        <button class="xbtn ${payTab === 'calc' ? 'primary' : ''}" onclick="payTabGo('calc')">🧮 급여 계산</button>
+        <button class="xbtn ${payTab === 'result' ? 'primary' : ''}" onclick="payTabGo('result')">📋 확정 결과</button>
+        ${payTab !== 'emps' ? ymFilter(loadPayrollTab) : ''}
+      </div>
+      <div id="pay-body"><div class="empty">로드 중…</div></div>`;
+    loadPayrollTab();
+  }
+
+  window.payTabGo = function (t) { payTab = t; renderPayroll(document.getElementById('page-content')); };
+
+  function loadPayrollTab() {
+    if (payTab === 'emps')   return loadEmps();
+    if (payTab === 'calc')   return loadPayCalc();
+    if (payTab === 'result') return loadPayResult();
+  }
+
+  // ── 직원 관리 ──────────────────────────────────────────────
+  async function loadEmps() {
+    const body = document.getElementById('pay-body');
+    body.innerHTML = '<div class="empty">로드 중…</div>';
     const r = await api('/api/employees');
     if (!r || !r.ok) return;
-    const emps = await r.json();
-    const typeLbl = { insured: '4대보험', freelance: '프리랜서', business: '사업자', hourly: '시급제' };
-    document.getElementById('emp-body').innerHTML = `
-      <div class="card"><div class="card-head">전체 직원 ${emps.length}명</div>
+    empCache = await r.json();
+    body.innerHTML = `
+      <div style="margin-bottom:12px">
+        <button class="xbtn primary" onclick="empForm()">➕ 직원 추가</button></div>
+      <div id="emp-form"></div>
+      <div class="card"><div class="card-head">전체 직원 ${empCache.length}명</div>
         <div style="overflow-x:auto;padding:8px 0 4px">
           <table class="tbl">
-            <thead><tr><th>이름</th><th>지점</th><th>유형</th><th>전화번호</th><th>이메일</th><th>입사일</th></tr></thead>
-            <tbody>${emps.map(e => `<tr>
-              <td>${e.name}</td><td style="text-align:left">${e.branch || '—'}</td>
-              <td style="text-align:left">${typeLbl[e.emp_type] || e.emp_type || '—'}</td>
+            <thead><tr><th>이름</th><th>지점</th><th>유형</th><th>기본급</th><th>전화번호</th><th>이메일</th><th>입사일</th><th></th></tr></thead>
+            <tbody>${empCache.map(e => `<tr>
+              <td style="text-align:left">${e.name}</td><td style="text-align:left">${e.branch || '—'}</td>
+              <td style="text-align:left">${TYPE_LBL[e.emp_type] || e.emp_type || '—'}</td>
+              <td>${fmtWon(e.base_salary)}</td>
               <td>${e.phone || '—'}</td><td style="text-align:left">${e.email || '—'}</td>
-              <td>${e.join_date || '—'}</td></tr>`).join('')}</tbody>
+              <td>${e.join_date || '—'}</td>
+              <td style="white-space:nowrap">
+                <button class="xbtn sm" onclick="empForm(${e.id})">수정</button>
+                <button class="xbtn sm" onclick="empDel(${e.id},'${e.name.replace(/'/g,'')}')">🗑️</button></td>
+            </tr>`).join('')}</tbody>
           </table></div></div>`;
+  }
+
+  window.empForm = async function (id) {
+    await loadMeta();
+    const e = id ? (empCache.find(x => x.id === id) || {}) : {};
+    const brOpts = META.branches.map(b => `<option ${b === e.branch ? 'selected' : ''}>${b}</option>`).join('');
+    document.getElementById('emp-form').innerHTML = `
+      <div class="card" style="padding:18px 20px;margin-bottom:14px">
+        <div style="font-weight:800;margin-bottom:12px">${id ? '✏️ 직원 수정' : '➕ 직원 추가'}</div>
+        <div class="emp-grid">
+          <label>이름<input id="ef-name" value="${e.name || ''}"></label>
+          <label>지점<select id="ef-branch">${brOpts}</select></label>
+          <label>유형<select id="ef-type">
+            ${Object.entries(TYPE_LBL).map(([k, l]) =>
+              `<option value="${k}" ${k === e.emp_type ? 'selected' : ''}>${l}</option>`).join('')}</select></label>
+          <label>기본급<input id="ef-salary" type="number" value="${e.base_salary || 0}"></label>
+          <label>부양가족<input id="ef-dep" type="number" value="${e.dependents || 1}"></label>
+          <label>전화번호<input id="ef-phone" value="${e.phone || ''}" placeholder="01012345678"></label>
+          <label>이메일<input id="ef-email" value="${e.email || ''}"></label>
+          <label>입사일<input id="ef-join" value="${e.join_date || ''}" placeholder="2026-01-01"></label>
+        </div>
+        <div style="margin-top:14px;display:flex;gap:8px">
+          <button class="xbtn primary" onclick="empSave(${id || 0})">저장</button>
+          <button class="xbtn" onclick="document.getElementById('emp-form').innerHTML=''">취소</button>
+        </div></div>`;
+  };
+
+  window.empSave = async function (id) {
+    const v = (x) => document.getElementById(`ef-${x}`).value.trim();
+    const body = { id, name: v('name'), branch: v('branch'), emp_type: v('type'),
+      base_salary: parseInt(v('salary')) || 0, dependents: parseInt(v('dep')) || 1,
+      phone: v('phone'), email: v('email'), join_date: v('join') };
+    if (!body.name) { showToast('이름을 입력하세요', 'err'); return; }
+    const r = await api('/api/employees', { method: 'POST', body: JSON.stringify(body) });
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (r && r.ok) {
+      showToast('✅ 저장 완료' + (d.account ? ' · ' + d.account : ''));
+      loadEmps();
+    } else showToast(d.detail || '저장 실패', 'err');
+  };
+
+  window.empDel = async function (id, name) {
+    if (!confirm(`'${name}' 직원을 삭제(비활성)할까요?`)) return;
+    const r = await api(`/api/employees/${id}`, { method: 'DELETE' });
+    if (r && r.ok) { showToast('삭제 완료'); loadEmps(); }
+  };
+
+  // ── 급여 계산 ──────────────────────────────────────────────
+  async function loadPayCalc() {
+    const body = document.getElementById('pay-body');
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const [er, pr] = await Promise.all([
+      api('/api/employees'),
+      api(`/api/payroll/entries?year=${selYear}&month=${selMonth}`),
+    ]);
+    if (!er || !er.ok) return;
+    empCache = await er.json();
+    const entries = pr && pr.ok ? await pr.json() : [];
+    const entryMap = {};
+    entries.forEach(en => { entryMap[en.employee_id] = en; });
+
+    const groups = { insured: [], freelance: [], business: [] };
+    empCache.forEach(e => { if (groups[e.emp_type]) groups[e.emp_type].push(e); });
+
+    const section = (type, lbl) => groups[type].length ? `
+      <div class="card"><div class="card-head">${lbl} (${groups[type].length}명)</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl">
+            <thead><tr><th>이름</th><th>지점</th><th>기본급</th><th>이번 달 지급액(세전)</th></tr></thead>
+            <tbody>${groups[type].map(e => {
+              const cur = entryMap[e.id] ? entryMap[e.id].gross_pay : (e.base_salary || 0);
+              return `<tr><td style="text-align:left">${e.name}</td>
+                <td style="text-align:left">${e.branch || '—'}</td>
+                <td>${fmtWon(e.base_salary)}</td>
+                <td><input id="pay-${e.id}" type="number" value="${cur || 0}"
+                  class="cell-in" style="width:130px;text-align:right"></td></tr>`;
+            }).join('')}</tbody>
+          </table></div></div>` : '';
+
+    body.innerHTML = `
+      <div class="card" style="padding:12px 18px;font-size:12.5px;color:var(--ink3)">
+        💡 지급액(세전)을 확인·수정 후 <b>급여 확정</b>을 누르면 세금·4대보험이 자동 계산되어 저장됩니다.
+        공단 고지내역이 업로드된 직원은 실납부액이 자동 적용됩니다. 0원은 제외됩니다.</div>
+      ${section('insured', '4대보험')}
+      ${section('freelance', '프리랜서(사업소득)')}
+      ${section('business', '사업자')}
+      <button class="xbtn primary" style="padding:13px 28px;font-size:14.5px"
+        onclick="confirmPayroll()">💾 ${selYear}년 ${selMonth}월 급여 확정</button>`;
+  }
+
+  window.confirmPayroll = async function () {
+    if (!confirm(`${selYear}년 ${selMonth}월 급여를 확정할까요?\n기존 확정 내역은 교체됩니다.`)) return;
+    const payments = {};
+    empCache.forEach(e => {
+      const el = document.getElementById(`pay-${e.id}`);
+      if (el) payments[e.id] = parseInt(el.value) || 0;
+    });
+    const r = await api('/api/payroll/confirm', { method: 'POST',
+      body: JSON.stringify({ year: selYear, month: selMonth, payments }) });
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (r && r.ok) {
+      let msg = `✅ ${d.ok}명 급여 확정 완료`;
+      if (d.actual_applied) msg += ` (공단 실납부액 ${d.actual_applied}명 적용)`;
+      showToast(msg);
+      if (d.errors && d.errors.length) alert('오류:\n' + d.errors.join('\n'));
+      payTabGo('result');
+    } else showToast(d.detail || '확정 실패', 'err');
+  };
+
+  // ── 확정 결과 ──────────────────────────────────────────────
+  async function loadPayResult() {
+    const body = document.getElementById('pay-body');
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const r = await api(`/api/payroll/entries?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) return;
+    const rows = await r.json();
+    if (!rows.length) { body.innerHTML = '<div class="empty">📭 확정된 급여가 없습니다</div>'; return; }
+    const totG = rows.reduce((s, x) => s + (x.gross_pay || 0), 0);
+    const totN = rows.reduce((s, x) => s + (x.net_pay || 0), 0);
+    body.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-lbl">확정 인원</div><div class="kpi-val">${rows.length}명</div></div>
+        <div class="kpi"><div class="kpi-lbl">총 지급액(세전)</div><div class="kpi-val">${fmtWon(totG)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">총 실수령액</div><div class="kpi-val pos">${fmtWon(totN)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">공제 합계</div><div class="kpi-val neg">${fmtWon(totG - totN)}원</div></div>
+      </div>
+      <div class="card"><div class="card-head">${selYear}년 ${selMonth}월 확정 내역</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl">
+            <thead><tr><th>이름</th><th>지점</th><th>유형</th><th>세전</th><th>4대보험</th><th>소득세</th><th>지방세</th><th>실수령</th></tr></thead>
+            <tbody>${rows.map(x => `<tr>
+              <td style="text-align:left">${x.name}</td>
+              <td style="text-align:left">${x.branch || '—'}</td>
+              <td style="text-align:left">${TYPE_LBL[x.emp_type] || x.emp_type || '—'}</td>
+              <td>${fmtWon(x.gross_pay)}</td>
+              <td>${fmtWon((x.pension||0)+(x.health||0)+(x.employment||0)+(x.care||0))}</td>
+              <td>${fmtWon(x.income_tax)}</td><td>${fmtWon(x.local_tax)}</td>
+              <td style="font-weight:700;color:var(--pos)">${fmtWon(x.net_pay)}</td>
+            </tr>`).join('')}</tbody>
+          </table></div></div>
+      <div class="card" style="padding:12px 18px;font-size:12.5px;color:var(--ink3)">
+        💡 급여명세서 PDF 발행·이메일 발송은 기존 ERP(인사/급여 → 급여명세서)에서 이용하세요.</div>`;
   }
 
   /* ════ 데이터 업로드 ═══════════════════════════════════════ */
@@ -402,16 +693,77 @@
         </div>
 
         <div class="card" style="padding:18px 20px">
+          <div style="font-weight:800;margin-bottom:4px">🏥 4대보험 고지내역</div>
+          <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">공단 고지내역 3종 — 이름으로 직원 자동 매칭</div>
+          <label style="font-size:11.5px;color:var(--ink3)">국민연금 (.xlsx)</label>
+          <input type="file" id="ins-pension" accept=".xlsx">
+          <label style="font-size:11.5px;color:var(--ink3)">건강보험 (.csv)</label>
+          <input type="file" id="ins-health" accept=".csv">
+          <label style="font-size:11.5px;color:var(--ink3)">고용보험 (.xlsx)</label>
+          <input type="file" id="ins-employ" accept=".xlsx">
+          <button class="xbtn primary" onclick="upInsurance()">업로드</button>
+        </div>
+
+        <div class="card" style="padding:18px 20px">
           <div style="font-weight:800;margin-bottom:4px">🗑️ 데이터 삭제</div>
           <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">선택 연월 데이터 삭제 (재업로드용)</div>
           <button class="xbtn" onclick="delData('card')" style="margin-bottom:6px">카드매출 삭제</button>
           <button class="xbtn" onclick="delData('bank')">통장내역 삭제</button>
         </div>
+
+        <div class="card" style="padding:18px 20px">
+          <div style="font-weight:800;margin-bottom:4px">💾 백업 / 복원</div>
+          <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">DB 전체 백업 · 최근 7개 유지</div>
+          <button class="xbtn primary" onclick="mkBackup()" style="margin-bottom:10px">지금 백업 생성</button>
+          <div id="backup-list" style="font-size:12.5px">로드 중…</div>
+        </div>
       </div>
-      <div id="up-result"></div>
-      <div class="card" style="padding:14px 20px;font-size:12.5px;color:var(--ink3)">
-        💡 4대보험 고지내역·백업/복원은 기존 ERP(데이터 업로드)에서 계속 이용하세요.</div>`;
+      <div id="up-result"></div>`;
+    loadBackups();
   }
+
+  async function loadBackups() {
+    const el = document.getElementById('backup-list');
+    if (!el) return;
+    const r = await api('/api/backups');
+    if (!r || !r.ok) { el.textContent = '백업 목록 로드 실패'; return; }
+    const list = await r.json();
+    el.innerHTML = list.length ? list.map(b => `
+      <div style="display:flex;align-items:center;gap:8px;padding:5px 0;border-bottom:1px solid var(--bd)">
+        <span style="flex:1">📦 ${b.ts} <span style="color:var(--ink3)">(${b.size_mb}MB)</span></span>
+        <button class="xbtn sm" onclick="restoreBackup('${b.name}')">복원</button>
+      </div>`).join('') : '<span style="color:var(--ink3)">저장된 백업 없음</span>';
+  }
+
+  window.mkBackup = async function () {
+    const r = await api('/api/backups', { method: 'POST' });
+    if (r && r.ok) { showToast('✅ 백업 생성 완료'); loadBackups(); }
+    else showToast('백업 실패', 'err');
+  };
+
+  window.restoreBackup = async function (name) {
+    if (!confirm(`${name} 백업으로 복원할까요?\n현재 DB는 broken_*.db로 보존됩니다.`)) return;
+    const r = await api('/api/backups/restore', { method: 'POST', body: JSON.stringify({ name }) });
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (r && r.ok) { alert('✅ ' + d.msg + '\n\n페이지를 새로고침하세요.'); }
+    else showToast(d.detail || '복원 실패', 'err');
+  };
+
+  window.upInsurance = async function () {
+    const fd = new FormData();
+    fd.append('year', selYear); fd.append('month', selMonth);
+    let any = false;
+    for (const [id, key] of [['ins-pension','pension'],['ins-health','health'],['ins-employ','employ']]) {
+      const f = document.getElementById(id).files[0];
+      if (f) { fd.append(key, f); any = true; }
+    }
+    if (!any) { showToast('파일을 하나 이상 선택하세요', 'err'); return; }
+    upResult('⏳ 처리 중…');
+    const r = await api('/api/upload/insurance', { method: 'POST', body: fd });
+    const d = r ? await r.json().catch(() => ({})) : {};
+    if (r && r.ok) upResult(`✅ 고지내역 ${d.saved}명 저장 (매칭 ${d.matched} / 미매칭 ${d.unmatched})`);
+    else upResult('❌ ' + (d.detail || '업로드 실패'), true);
+  };
 
   function upResult(html, isErr) {
     document.getElementById('up-result').innerHTML =
@@ -571,5 +923,5 @@
     if (r && r.ok) { showToast('삭제 완료'); loadSettings(); }
   };
 
-  renderShell();
+  loadMeta().then(renderShell);
 })();
