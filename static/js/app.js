@@ -325,12 +325,16 @@
             <label style="font-size:12px;color:var(--ink2);font-weight:700">📡 출퇴근 허용 반경:
               <span id="rad-val"></span>m</label>
             <input id="loc-rad" type="range" min="100" max="500" step="50" style="width:100%;margin:6px 0 12px">
-            <button class="xbtn primary" onclick="saveLoc()" style="width:100%">💾 위치 정보 저장</button>
-            <div id="map-preview" style="margin-top:14px"></div>
+            <button class="xbtn primary" onclick="saveLoc()" style="width:100%;margin-bottom:14px">💾 위치 정보 저장</button>
+            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:6px">📍 주소 검색 (다음 우편번호)</div>
+            <div id="daum-postcode" style="height:380px;border:1px solid var(--bd);border-radius:10px;overflow:hidden"></div>
           </div>
           <div>
-            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:6px">📍 주소 검색 (다음 우편번호)</div>
-            <div id="daum-postcode" style="height:420px;border:1px solid var(--bd);border-radius:10px;overflow:hidden"></div>
+            <div style="font-size:12px;font-weight:700;color:var(--ink2);margin-bottom:6px">
+              🗺️ 클릭형 지도 — <span style="color:var(--red)">지도를 클릭하면 그 위치가 좌표로 입력됩니다</span></div>
+            <div id="loc-map" style="height:560px;border:1px solid var(--bd);border-radius:10px"></div>
+            <div style="font-size:11.5px;color:var(--ink3);margin-top:6px">
+              빨간 원 = 출퇴근 허용 반경. 자동 변환 위치가 틀리면 지도에서 올바른 위치를 클릭하세요.</div>
           </div>
         </div>
       </div>
@@ -354,10 +358,14 @@
     const radEl = document.getElementById('loc-rad');
     radEl.addEventListener('input', () => {
       document.getElementById('rad-val').textContent = radEl.value;
+      updateLocMap();
     });
+    ['loc-lat', 'loc-lng'].forEach(id =>
+      document.getElementById(id).addEventListener('change', updateLocMap));
     document.getElementById('loc-sel').addEventListener('change', e => {
       locSelId = +e.target.value; fillLocForm();
     });
+    initLocMap();
     fillLocForm();
     initDaumPostcode();
   }
@@ -370,18 +378,48 @@
     const rad = b.attendance_radius || 300;
     document.getElementById('loc-rad').value = rad;
     document.getElementById('rad-val').textContent = rad;
-    updateMapPreview();
+    updateLocMap(true);
   }
 
-  function updateMapPreview() {
+  // ── 클릭형 지도 (Leaflet) ──────────────────────────────────
+  let locMap = null, locMarker = null, locCircle = null;
+
+  function initLocMap() {
+    const el = document.getElementById('loc-map');
+    if (!el || !window.L) return;
+    locMap = L.map(el).setView([37.5665, 126.9780], 11);   // 기본: 서울
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap',
+    }).addTo(locMap);
+
+    // 지도 클릭 → 좌표 입력
+    locMap.on('click', (e) => {
+      const { lat, lng } = e.latlng;
+      document.getElementById('loc-lat').value = lat.toFixed(6);
+      document.getElementById('loc-lng').value = lng.toFixed(6);
+      updateLocMap();
+      showToast(`📍 좌표 선택: ${lat.toFixed(5)}, ${lng.toFixed(5)} — 저장을 눌러주세요`);
+    });
+  }
+
+  function updateLocMap(recenter) {
+    if (!locMap) return;
     const lat = parseFloat(document.getElementById('loc-lat').value);
     const lng = parseFloat(document.getElementById('loc-lng').value);
-    const b   = brList.find(x => x.id === locSelId) || {};
-    const el  = document.getElementById('map-preview');
-    if (lat && lng) {
-      el.innerHTML = `<iframe src="https://map.kakao.com/link/map/${(b.name||'').replace(/['"]/g,'')},${lat},${lng}"
-        style="width:100%;height:280px;border:1px solid var(--bd);border-radius:10px"></iframe>`;
-    } else el.innerHTML = '';
+    const rad = parseInt(document.getElementById('loc-rad').value) || 300;
+
+    if (locMarker) { locMap.removeLayer(locMarker); locMarker = null; }
+    if (locCircle) { locMap.removeLayer(locCircle); locCircle = null; }
+    if (!lat || !lng) return;
+
+    const b = brList.find(x => x.id === locSelId) || {};
+    locMarker = L.marker([lat, lng]).addTo(locMap)
+      .bindPopup(`<b>${b.name || ''}</b><br>반경 ${rad}m`);
+    locCircle = L.circle([lat, lng], {
+      radius: rad, color: '#E60028', fillColor: '#E60028', fillOpacity: 0.12, weight: 2,
+    }).addTo(locMap);
+    if (recenter) locMap.setView([lat, lng], 16);
   }
 
   function initDaumPostcode() {
@@ -392,7 +430,7 @@
           document.getElementById('loc-addr').value = addr;
           showToast('📋 주소 입력 완료 — 좌표 자동 변환을 눌러주세요');
         },
-        width: '100%', height: '420px',
+        width: '100%', height: '380px',
       }).embed(document.getElementById('daum-postcode'), { autoClose: false });
     };
     if (window.daum && window.daum.Postcode) { mount(); return; }
@@ -411,8 +449,8 @@
     if (r && r.ok) {
       document.getElementById('loc-lat').value = d.lat.toFixed(6);
       document.getElementById('loc-lng').value = d.lng.toFixed(6);
-      showToast(`✅ 좌표 변환 완료: ${d.lat.toFixed(5)}, ${d.lng.toFixed(5)}`);
-      updateMapPreview();
+      showToast(`✅ 좌표 변환 완료 — 지도에서 위치가 맞는지 확인하세요`);
+      updateLocMap(true);
     } else showToast(d.detail || '좌표를 찾지 못했습니다', 'err');
   };
 
