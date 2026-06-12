@@ -5,17 +5,26 @@ DB·비즈니스 로직: 기존 WEBAPP 폴더의 모듈을 그대로 재사용 (
 """
 from __future__ import annotations
 
+import os
 import sys
 import time
 from pathlib import Path
 
-# ── 기존 WEBAPP 모듈 재사용 (DB·집계 로직 공유) ─────────────────
+# ── 기존 WEBAPP 모듈 재사용 (집계 로직 공유) ────────────────────
 BASE_DIR   = Path(__file__).parent
 WEBAPP_DIR = (BASE_DIR.parent / "WEBAPP")
 if not WEBAPP_DIR.exists():
     # NAS Docker 환경: /app/legacy 로 마운트
     WEBAPP_DIR = Path("/app/legacy")
 sys.path.insert(0, str(WEBAPP_DIR))
+
+# ── DB 선택 ───────────────────────────────────────────────────
+# WEBAPP2/data/settlement.db 가 있으면 그것을 사용 (독립 DB 모드)
+# 없으면 기존 WEBAPP/data/settlement.db 공유 (기본)
+# SETTLEMENT_DB 환경변수가 이미 설정돼 있으면 그것을 최우선
+_LOCAL_DB = BASE_DIR / "data" / "settlement.db"
+if not os.getenv("SETTLEMENT_DB") and _LOCAL_DB.exists():
+    os.environ["SETTLEMENT_DB"] = str(_LOCAL_DB)
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import RedirectResponse
@@ -949,8 +958,8 @@ async def api_reports_resolve(request: Request, body: ResolveBody):
 
 
 # ── 백업 / 복원 ───────────────────────────────────────────────
-_BACKUP_DIR = WEBAPP_DIR / "backups"
-_DB_FILE    = WEBAPP_DIR / "data" / "settlement.db"
+from modules.db import DB_PATH as _DB_FILE
+_BACKUP_DIR = Path(_DB_FILE).parent.parent / "backups"
 
 
 @app.get("/api/backups")
