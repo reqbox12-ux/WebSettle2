@@ -558,6 +558,16 @@
         </div></div>`;
 
     body.innerHTML = `
+      <div class="card" style="padding:14px 18px;margin-bottom:14px;display:flex;
+        align-items:center;gap:12px;flex-wrap:wrap">
+        <span style="font-size:13px;font-weight:700">🌐 지점 포털 (CRM)</span>
+        <span style="font-size:12px;color:var(--ink3)">admin 계정으로 로그인하면
+          상단에서 지점을 선택해 전 지점 회원·상품·결제를 관리할 수 있습니다</span>
+        <a href="https://attend.laonfitness.com/login" target="_blank" class="xbtn primary"
+          style="text-decoration:none">포털 접속</a>
+        <a href="http://192.168.0.237:8502/login" target="_blank" class="xbtn"
+          style="text-decoration:none">내부망 접속</a>
+      </div>
       <div class="kpi-grid" style="grid-template-columns:repeat(4,1fr)">
         <div class="kpi"><div class="kpi-lbl">오늘 출근</div><div class="kpi-val">${d.attendance_today}명</div></div>
         <div class="kpi"><div class="kpi-lbl">AS 대기</div><div class="kpi-val ${d.as_requests.length ? 'neg' : ''}">${d.as_requests.length}건</div></div>
