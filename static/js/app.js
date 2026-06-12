@@ -576,17 +576,99 @@
     body.innerHTML = '<div class="empty">로드 중…</div>';
     const r = await api(`/api/branch/pnl?year=${selYear}&month=${selMonth}&branch=${encodeURIComponent(selBranch)}`);
     if (!r || !r.ok) { body.innerHTML = '<div class="empty">오류</div>'; return; }
-    const { summary: s = {}, rev_by_cat = {}, exp_by_cat = {}, goal = 0 } = await r.json();
+    const { summary: s = {}, rev_by_cat = {}, exp_by_cat = {}, goal = 0, bmr = {} } = await r.json();
     if (!s.branch) { body.innerHTML = '<div class="empty">📭 해당 지점 데이터가 없습니다</div>'; return; }
 
-    const pnl = Math.round(s['손익'] || 0);
-    const rev = Math.round(s['총매출'] || 0);
+    const V = (k) => Math.round(s[k] || 0);
+    const pnl = V('손익');
+    const rev = V('총매출');
     const achieve = goal > 0 ? (rev / goal * 100) : 0;
     const aColor = achieve >= 100 ? 'var(--pos)' : (achieve >= 70 ? '#B86E1F' : 'var(--red)');
 
-    const catRows = (obj) => Object.entries(obj).sort((a,b) => b[1]-a[1])
-      .map(([k, v]) => `<div class="pnl-row"><span>${k}</span><span>${fmtWon(v)}</span></div>`).join('')
-      || '<div class="pnl-row" style="color:var(--ink3)">내역 없음</div>';
+    // ── 행 빌더: indent(세부) / bold(소계) / total(최종 합계) ──
+    const row = (lbl, amt, opt = {}) => {
+      if (!amt && !opt.always) return '';
+      const lblStyle = opt.indent ? 'color:var(--ink3);padding-left:18px;font-size:12.5px'
+                     : opt.total  ? `color:${opt.color || 'var(--ink)'};font-weight:800;font-size:15px`
+                     : 'color:var(--ink);font-weight:700;font-size:13.5px';
+      const amtStyle = (opt.total ? 'font-weight:800;font-size:15px;' : opt.indent ? 'font-size:12.5px;' : 'font-weight:700;font-size:13.5px;')
+                     + `color:${opt.color || (opt.indent ? 'var(--ink2)' : 'var(--ink)')}`;
+      const border = opt.total ? 'border-top:2px solid var(--ink);margin-top:6px;padding:12px 0'
+                   : opt.bold  ? 'border-top:2px solid var(--bds);margin-top:3px;padding:10px 0'
+                   : 'border-bottom:1px solid var(--bd);padding:6px 0';
+      return `<div style="display:flex;justify-content:space-between;align-items:center;${border};
+        font-feature-settings:'tnum' 1">
+        <span style="${lblStyle}">${lbl}</span><span style="${amtStyle}">${fmtWon(amt)}원</span></div>`;
+    };
+    const secTitle = (t) => `<div style="font-size:10px;font-weight:700;color:var(--ink3);
+      letter-spacing:.07em;text-transform:uppercase;padding-bottom:8px;
+      border-bottom:1px solid var(--bd);margin-bottom:2px">${t}</div>`;
+
+    // ── 수익 섹션: 카드 / 현금(카테고리별) / 직접입력 ─────────
+    const CASH_CATS = ['PT매출(현금)','GX매출(현금)','골프매출(현금)','키즈매출(현금)','기타매출(현금)',
+                       '도급비','시설상환비','카페매출'];
+    const BMR_LBL = { dogeub:'도급비(입력)', pt_sales:'PT매출(입력)', gx_sales:'GX매출(입력)',
+      cafe_sales:'카페매출(입력)', golf_sales:'골프매출(입력)', facility_fee:'시설상환비(입력)',
+      cafe_labor:'카페인건비(입력)', other_sales:'기타매출(입력)' };
+
+    let revH = secTitle('수 익');
+    const cardTot = V('카드공급가액') + V('카드VAT') + V('카드수수료');
+    if (cardTot > 0) {
+      revH += row('카드 공급가액', V('카드공급가액'), { indent: true });
+      revH += row('카드 VAT', V('카드VAT'), { indent: true });
+      revH += row('카드 수수료', V('카드수수료'), { indent: true });
+      revH += row('카드 소계', cardTot, { bold: true });
+    }
+    const cashTot = V('현금공급가액') + V('현금VAT');
+    if (cashTot > 0) {
+      for (const cat of CASH_CATS) {
+        const v = Math.round(rev_by_cat[cat] || 0);
+        if (v > 0) revH += row(cat, v, { indent: true });
+      }
+      revH += row('현금 VAT', V('현금VAT'), { indent: true });
+      revH += row('현금 소계', cashTot, { bold: true });
+    }
+    const bmrTot = V('수동입력매출');
+    if (bmrTot > 0) {
+      for (const [k, lbl] of Object.entries(BMR_LBL)) {
+        const v = Math.round(bmr[k] || 0);
+        if (v > 0) revH += row(lbl, v, { indent: true });
+      }
+      revH += row('직접입력 VAT (÷11)', V('직접입력VAT'), { indent: true });
+      revH += row('직접입력 소계', bmrTot, { bold: true });
+    }
+    revH += row('총 매출', rev, { total: true, always: true });
+
+    // ── 비용 섹션: 인건비 세부 / 기타지출 / 부가세 세부 ───────
+    let expH = secTitle('비 용');
+    const PAY_ITEMS = [['급여 (실수령)','급여'], ['4대보험료 (직원부담)','4대보험료_직원'],
+      ['4대보험료 (본사부담)','4대보험_본사'], ['소득세·지방세','소득세지방세'],
+      ['프리랜서','프리랜서'], ['프리랜서 세금','프리랜서세금']];
+    for (const [lbl, key] of PAY_ITEMS) expH += row(lbl, V(key), { indent: true });
+    expH += row('인건비 합계', V('인건비합계'), { bold: true });
+    for (const [cat, amt] of Object.entries(exp_by_cat).sort((a,b) => b[1]-a[1])) {
+      if (amt > 0) expH += row(cat, Math.round(amt), { indent: true });
+    }
+    expH += row('기타지출 합계', V('기타지출'), { bold: true });
+    expH += row('카드 VAT', V('카드VAT'), { indent: true });
+    expH += row('현금 VAT', V('현금VAT'), { indent: true });
+    expH += row('직접입력 VAT', V('직접입력VAT'), { indent: true });
+    expH += row('부가세 합계', V('부가세합계'), { bold: true });
+    expH += row('총 지출', V('총지출'), { total: true, always: true, color: 'var(--red)' });
+
+    // ── 순손익 배너 ─────────────────────────────────────────
+    const pnlCol = pnl >= 0 ? 'var(--pos)' : 'var(--red)';
+    const pnlBanner = `
+      <div style="display:flex;justify-content:space-between;align-items:center;
+        padding:16px 20px;background:${pnl >= 0 ? 'var(--poss)' : 'var(--reds)'};
+        border-radius:10px;margin-top:16px">
+        <span style="font-size:16px;font-weight:800;color:${pnlCol}">순 손익</span>
+        <div style="text-align:right">
+          <div style="font-size:20px;font-weight:800;color:${pnlCol};font-feature-settings:'tnum' 1">
+            ${pnl >= 0 ? '▲' : '▼'} ${fmtWon(Math.abs(pnl))}원</div>
+          <div style="font-size:12.5px;font-weight:600;color:${pnlCol}">
+            이익률 ${(s['이익률']||0) >= 0 ? '+' : ''}${s['이익률'] || 0}% (손익÷총매출)</div>
+        </div></div>`;
 
     body.innerHTML = `
       <div class="kpi-grid">
@@ -613,19 +695,12 @@
         </div>
       </div>
 
-      <div class="pnl-cols">
-        <div class="card" style="padding:18px 20px">
-          <div style="font-size:13px;font-weight:800;color:var(--pos);margin-bottom:10px">매출 (카테고리별)</div>
-          ${catRows(rev_by_cat)}
-          <div class="pnl-row tot"><span>총매출</span><span>${fmtWon(rev)}</span></div>
+      <div class="card" style="padding:22px 24px">
+        <div class="pnl-cols" style="gap:32px">
+          <div>${revH}</div>
+          <div>${expH}</div>
         </div>
-        <div class="card" style="padding:18px 20px">
-          <div style="font-size:13px;font-weight:800;color:var(--red);margin-bottom:10px">지출 (카테고리별)</div>
-          <div class="pnl-row"><span>인건비합계</span><span>${fmtWon(s['인건비합계'])}</span></div>
-          <div class="pnl-row"><span>부가세합계</span><span>${fmtWon(s['부가세합계'])}</span></div>
-          ${catRows(exp_by_cat)}
-          <div class="pnl-row tot"><span>총지출</span><span>${fmtWon(s['총지출'])}</span></div>
-        </div>
+        ${pnlBanner}
       </div>`;
   }
 

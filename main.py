@@ -238,7 +238,13 @@ async def api_branch_pnl(request: Request, year: int, month: int, branch: str):
             exp_by_cat = {str(k): int(v) for k, v in
                           br.groupby("category")["amount"].sum().items()}
     goal = get_branch_goals(year, month).get(branch, 0)
-    return {"summary": row, "rev_by_cat": rev_by_cat, "exp_by_cat": exp_by_cat, "goal": goal}
+    # 직접입력 매출 상세 (도급비·PT 등)
+    from domains.branch.db import get_branch_monthly_revenue
+    bmr = next((r for r in get_branch_monthly_revenue(year, month)
+                if r.get("branch") == branch), {})
+    bmr = {k: int(bmr.get(k, 0) or 0) for k in _BMR_COLS}
+    return {"summary": row, "rev_by_cat": rev_by_cat, "exp_by_cat": exp_by_cat,
+            "goal": goal, "bmr": bmr}
 
 
 class GoalBody(BaseModel):
