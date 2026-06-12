@@ -186,8 +186,12 @@
         <div class="kpi"><div class="kpi-lbl">이익률</div>
           <div class="kpi-val ${(totals['이익률']||0) >= 0 ? 'pos' : 'neg'}">${totals['이익률'] || 0}%</div></div>
       </div>
-      <div class="card"><div class="card-head">연간 추이 (1월~${selMonth}월)</div>
-        <div style="padding:14px 20px"><canvas id="trend-chart" height="90"></canvas></div></div>
+      <div class="dash-half">
+        <div class="card"><div class="card-head">${selYear}년 연간 추이 (총매출 · 총지출 · 손익)</div>
+          <div style="padding:14px 20px"><canvas id="trend-chart"></canvas></div></div>
+        <div class="card"><div class="card-head">손익 순위 · 인건비 비율</div>
+          <div style="padding:12px 20px 18px" id="rank-cards"></div></div>
+      </div>
       <div class="card"><div class="card-head">${selYear}년 ${selMonth}월 · 지점별 손익</div>
         <div style="overflow-x:auto;padding:8px 0 4px">
           <table class="tbl">
@@ -201,8 +205,46 @@
             }).join('')}</tbody>
           </table></div></div>`;
 
-    // 추이 차트 (고정형 — 애니메이션·인터랙션 OFF)
-    const tr = await api(`/api/summary/trend?year=${selYear}&month=${selMonth}`);
+    // ── 손익 순위 카드 + 인건비 비율 ─────────────────────────
+    const rankEl = document.getElementById('rank-cards');
+    if (rankEl && rows.length) {
+      const byPnl = [...rows].sort((a, b) => (b['손익'] || 0) - (a['손익'] || 0));
+      const top3 = byPnl.slice(0, 3);
+      const bot3 = byPnl.slice(-3).reverse();
+      const rankRow = (r2, i, pos) => {
+        const p = Math.round(r2['손익'] || 0);
+        const rt = r2['이익률'] || 0;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 12px;
+          background:${pos ? 'var(--poss)' : 'var(--reds)'};border-radius:9px;margin-bottom:6px">
+          <span style="font-size:12px;font-weight:800;color:${pos ? 'var(--pos)' : 'var(--red)'};
+            width:16px">${i + 1}</span>
+          <span style="flex:1;font-size:13px;font-weight:700">${r2.branch}</span>
+          <div style="text-align:right">
+            <div style="font-size:13px;font-weight:800;color:${pos ? 'var(--pos)' : 'var(--red)'};
+              font-feature-settings:'tnum' 1">${pos ? '▲' : '▼'} ${fmtWon(Math.abs(p))}원</div>
+            <div style="font-size:10.5px;color:var(--ink3)">${rt >= 0 ? '+' : ''}${rt}%</div>
+          </div></div>`;
+      };
+      // 매출 대비 인건비 비율 (전체)
+      const totLabor = rows.reduce((s, r2) => s + (r2['인건비합계'] || 0), 0);
+      const totRev2  = totals['총매출'] || 0;
+      const laborPct = totRev2 ? (totLabor / totRev2 * 100) : 0;
+      const laborCol = laborPct <= 40 ? 'var(--pos)' : (laborPct <= 55 ? '#B86E1F' : 'var(--red)');
+      rankEl.innerHTML = `
+        <div style="font-size:10.5px;font-weight:700;color:var(--ink3);margin-bottom:6px">🏆 흑자 TOP 3</div>
+        ${top3.map((r2, i) => rankRow(r2, i, true)).join('')}
+        <div style="font-size:10.5px;font-weight:700;color:var(--ink3);margin:12px 0 6px">⚠️ 적자 BOTTOM 3</div>
+        ${bot3.map((r2, i) => rankRow(r2, i, false)).join('')}
+        <div style="display:flex;align-items:center;gap:12px;margin-top:14px;padding:12px 14px;
+          background:var(--sf2);border-radius:9px">
+          <span style="font-size:12px;font-weight:700">💪 매출 대비 인건비</span>
+          <span style="font-size:18px;font-weight:800;color:${laborCol}">${laborPct.toFixed(1)}%</span>
+          <span style="font-size:11px;color:var(--ink3)">인건비 ${fmtWon(totLabor)}원 ÷ 총매출 ${fmtWon(totRev2)}원</span>
+        </div>`;
+    }
+
+    // ── 연간 추이 차트 (1~12월 고정, 매출·지출·손익 3선) ──────
+    const tr = await api(`/api/summary/trend?year=${selYear}`);
     if (tr && tr.ok) {
       const t = await tr.json();
       const ctx = document.getElementById('trend-chart');
@@ -211,13 +253,17 @@
           type: 'line',
           data: { labels: t.months.map(m => m + '월'),
             datasets: [
-              { label: '총매출', data: t.revenue, borderColor: '#3D3835', backgroundColor: '#3D3835', tension: .3 },
-              { label: '손익',   data: t.profit,  borderColor: '#2E7D5B', backgroundColor: '#2E7D5B', tension: .3 },
+              { label: '총매출', data: t.revenue, borderColor: '#3D3835', backgroundColor: '#3D3835', tension: .3, pointRadius: 4 },
+              { label: '총지출', data: t.expense, borderColor: '#E60028', backgroundColor: '#E60028', tension: .3, pointRadius: 4 },
+              { label: '손익',   data: t.profit,  borderColor: '#2E7D5B', backgroundColor: '#2E7D5B', tension: .3, pointRadius: 4 },
             ]},
           options: { animation: false, events: [], responsive: true,
-            plugins: { legend: { position: 'top', align: 'end' } },
+            maintainAspectRatio: false,
+            plugins: { legend: { position: 'top', align: 'end',
+              labels: { boxWidth: 14, font: { size: 11 } } } },
             scales: { y: { ticks: { callback: v => (v/10000).toLocaleString() + '만' } } } }
         });
+        ctx.parentElement.style.height = '340px';
       }
     }
   }
@@ -809,7 +855,9 @@
     if (payTab === 'result') return loadPayResult();
   }
 
-  // ── 직원 관리 ──────────────────────────────────────────────
+  // ── 직원 관리 (정렬 가능 테이블) ───────────────────────────
+  let empSort = { key: 'branch', dir: 1 };
+
   async function loadEmps() {
     const body = document.getElementById('pay-body');
     body.innerHTML = '<div class="empty">로드 중…</div>';
@@ -820,21 +868,51 @@
       <div style="margin-bottom:12px">
         <button class="xbtn primary" onclick="empForm()">➕ 직원 추가</button></div>
       <div id="emp-form"></div>
-      <div class="card"><div class="card-head">전체 직원 ${empCache.length}명</div>
-        <div style="overflow-x:auto;padding:8px 0 4px">
-          <table class="tbl">
-            <thead><tr><th>이름</th><th>지점</th><th>유형</th><th>기본급</th><th>전화번호</th><th>이메일</th><th>입사일</th><th></th></tr></thead>
-            <tbody>${empCache.map(e => `<tr>
-              <td style="text-align:left">${e.name}</td><td style="text-align:left">${e.branch || '—'}</td>
-              <td style="text-align:left">${TYPE_LBL[e.emp_type] || e.emp_type || '—'}</td>
-              <td>${fmtWon(e.base_salary)}</td>
-              <td>${e.phone || '—'}</td><td style="text-align:left">${e.email || '—'}</td>
-              <td>${e.join_date || '—'}</td>
-              <td style="white-space:nowrap">
-                <button class="xbtn sm" onclick="empForm(${e.id})">수정</button>
-                <button class="xbtn sm" onclick="empDel(${e.id},'${e.name.replace(/'/g,'')}')">🗑️</button></td>
-            </tr>`).join('')}</tbody>
-          </table></div></div>`;
+      <div class="card"><div class="card-head">전체 직원 ${empCache.length}명
+        <span style="font-size:11.5px;color:var(--ink3);font-weight:500">— 컬럼 제목을 클릭하면 정렬됩니다</span></div>
+        <div style="overflow-x:auto;padding:8px 0 4px" id="emp-table"></div></div>`;
+    renderEmpTable();
+  }
+
+  window.empSortBy = function (key) {
+    if (empSort.key === key) empSort.dir = -empSort.dir;
+    else empSort = { key, dir: 1 };
+    renderEmpTable();
+  };
+
+  function renderEmpTable() {
+    const el = document.getElementById('emp-table');
+    if (!el) return;
+    const { key, dir } = empSort;
+    const sorted = [...empCache].sort((a, b) => {
+      let va = a[key] ?? '', vb = b[key] ?? '';
+      if (key === 'base_salary') { va = +va || 0; vb = +vb || 0; return (va - vb) * dir; }
+      return String(va).localeCompare(String(vb), 'ko') * dir;
+    });
+    const arrow = (k) => empSort.key === k ? (empSort.dir === 1 ? ' ▲' : ' ▼') : '';
+    const th = (k, lbl, align) =>
+      `<th style="cursor:pointer;user-select:none;${align ? 'text-align:' + align : ''}"
+         onclick="empSortBy('${k}')">${lbl}${arrow(k)}</th>`;
+    el.innerHTML = `
+      <table class="tbl">
+        <thead><tr>
+          ${th('name', '이름', 'left')}${th('branch', '지점', 'left')}${th('emp_type', '유형', 'left')}
+          ${th('base_salary', '기본급')}${th('phone', '전화번호')}${th('email', '이메일', 'left')}
+          ${th('join_date', '입사일')}<th></th>
+        </tr></thead>
+        <tbody>${sorted.map(e => `<tr>
+          <td style="text-align:left;font-weight:600">${e.name}</td>
+          <td style="text-align:left">${e.branch || '—'}</td>
+          <td style="text-align:left">${TYPE_LBL[e.emp_type] || e.emp_type || '—'}</td>
+          <td>${fmtWon(e.base_salary)}</td>
+          <td>${e.phone || '—'}</td>
+          <td style="text-align:left">${e.email || '—'}</td>
+          <td>${e.join_date || '—'}</td>
+          <td style="white-space:nowrap">
+            <button class="xbtn sm" onclick="empForm(${e.id})">수정</button>
+            <button class="xbtn sm" onclick="empDel(${e.id},'${e.name.replace(/'/g,'')}')">🗑️</button></td>
+        </tr>`).join('')}</tbody>
+      </table>`;
   }
 
   window.empForm = async function (id) {
@@ -1158,6 +1236,24 @@
 
   /* ════ 설정 (미분류 검토 + 규칙) ═══════════════════════════ */
   let setTab = 'review';
+  let rvOnlyUnclf = true;
+  let rvCatFilter = '';
+  let rvBrFilter  = '';
+
+  window.rvFilter = function (kind, val) {
+    if (kind === 'unclf') rvOnlyUnclf = !!+val;
+    if (kind === 'cat')   rvCatFilter = val;
+    if (kind === 'br')    rvBrFilter  = val;
+    loadSettings();
+  };
+
+  window.unclassify = async function (id) {
+    if (!confirm('이 거래의 분류를 취소하고 미분류로 되돌릴까요?')) return;
+    const r = await api('/api/rules/unclassify', { method: 'POST',
+      body: JSON.stringify({ tx_id: id }) });
+    if (r && r.ok) { showToast('↩️ 미분류로 변경됨'); loadSettings(); }
+    else showToast('변경 실패', 'err');
+  };
 
   async function renderSettings(el) {
     await loadMeta();
@@ -1236,31 +1332,58 @@
     }
 
     if (setTab === 'review') {
-      const r = await api(`/api/rules/transactions?year=${selYear}&month=${selMonth}&unclassified=1`);
+      const params = `year=${selYear}&month=${selMonth}&unclassified=${rvOnlyUnclf ? 1 : 0}` +
+        (rvCatFilter ? `&category=${encodeURIComponent(rvCatFilter)}` : '') +
+        (rvBrFilter ? `&branch=${encodeURIComponent(rvBrFilter)}` : '');
+      const r = await api(`/api/rules/transactions?${params}`);
       if (!r || !r.ok) return;
       const txs = await r.json();
-      if (!txs.length) { body.innerHTML = '<div class="empty">✅ 미분류 거래가 없습니다</div>'; return; }
 
-      const brOpts  = ['', ...META.branches].map(b => `<option value="${b}">${b || '— 지점 —'}</option>`).join('');
-      const catOpts = ['', ...META.categories].map(c => `<option value="${c}">${c || '— 계정 —'}</option>`).join('');
+      const brOpts  = (cur) => ['', ...META.branches].map(b =>
+        `<option value="${b}" ${b === cur ? 'selected' : ''}>${b || '— 지점 —'}</option>`).join('');
+      const catOpts = (cur) => ['', ...META.categories].map(c =>
+        `<option value="${c}" ${c === cur ? 'selected' : ''}>${c || '— 계정 —'}</option>`).join('');
 
-      body.innerHTML = `
-        <div class="card"><div class="card-head">미분류 ${txs.length}건</div>
+      const filterBar = `
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+          <button class="xbtn sm ${rvOnlyUnclf ? 'primary' : ''}" onclick="rvFilter('unclf',1)">🔴 미분류만</button>
+          <button class="xbtn sm ${!rvOnlyUnclf ? 'primary' : ''}" onclick="rvFilter('unclf',0)">전체 보기</button>
+          <select id="rv-cat-f" class="cell-in" onchange="rvFilter('cat',this.value)">
+            <option value="">전체 계정과목</option>
+            ${META.categories.map(c => `<option ${c === rvCatFilter ? 'selected' : ''}>${c}</option>`).join('')}
+          </select>
+          <select id="rv-br-f" class="cell-in" onchange="rvFilter('br',this.value)">
+            <option value="">전체 지점</option>
+            ${META.branches.map(b => `<option ${b === rvBrFilter ? 'selected' : ''}>${b}</option>`).join('')}
+          </select>
+          <span style="font-size:12px;color:var(--ink3)">${txs.length}건</span>
+        </div>`;
+
+      if (!txs.length) {
+        body.innerHTML = filterBar + '<div class="empty">📭 조건에 맞는 거래가 없습니다</div>';
+        return;
+      }
+
+      body.innerHTML = filterBar + `
+        <div class="card">
           <div style="padding:8px 16px 16px">
             ${txs.map(t => `
               <div class="rv-row" id="rv-${t.id}">
                 <div class="rv-info">
-                  <b>[${t.tx_date}]</b> ${t.description}
+                  ${t.needs_review ? '🔴' : '🟢'} <b>[${t.tx_date}]</b> ${t.description}
                   <span style="color:${t.deposit ? 'var(--pos)' : 'var(--red)'};font-weight:700">
                     ${t.deposit ? '입금 ' + fmtWon(t.deposit) : '출금 ' + fmtWon(t.withdrawal)}</span>
-                  <span style="color:var(--ink3);font-size:11px">${t.bank}</span>
+                  <span style="color:var(--ink3);font-size:11px">${t.bank}
+                    ${t.classification_source ? '· ' + t.classification_source : ''}</span>
                 </div>
                 <div class="rv-ctl">
-                  <select id="br-${t.id}">${brOpts}</select>
-                  <select id="cat-${t.id}">${catOpts}</select>
+                  <select id="br-${t.id}">${brOpts(t.branch)}</select>
+                  <select id="cat-${t.id}">${catOpts(t.category)}</select>
                   <label style="font-size:11.5px;display:flex;align-items:center;gap:4px">
                     <input type="checkbox" id="rule-${t.id}"> 규칙</label>
                   <button class="xbtn primary sm" onclick="saveClassify(${t.id},'${t.bank}','${(t.description||'').replace(/'/g,'')}')">저장</button>
+                  ${!t.needs_review ? `<button class="xbtn sm" onclick="unclassify(${t.id})"
+                    title="분류 취소 → 미분류로">↩️ 미분류</button>` : ''}
                 </div>
               </div>`).join('')}
           </div></div>`;
@@ -1306,8 +1429,8 @@
       body: JSON.stringify({ tx_id: id, branch: br, category: cat,
         add_rule: addRuleChk, bank, keyword: desc.slice(0, 12) }) });
     if (r && r.ok) {
-      document.getElementById(`rv-${id}`).style.display = 'none';
       showToast('✅ 분류 저장' + (addRuleChk ? ' + 규칙 추가' : ''));
+      loadSettings();
     } else showToast('저장 실패', 'err');
   };
 

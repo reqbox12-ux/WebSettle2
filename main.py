@@ -164,16 +164,21 @@ async def api_summary(request: Request, year: int, month: int):
 
 
 @app.get("/api/summary/trend")
-async def api_trend(request: Request, year: int, month: int):
+async def api_trend(request: Request, year: int, month: int = 12):
+    """연간 추이 — 1월부터 12월(또는 데이터 있는 달)까지 매출/지출/손익"""
     require_auth(request)
     from domains.dashboard.service import build_trend
-    df = build_trend(year, month)
+    df = build_trend(year, 12)
     if df is None or df.empty:
-        return {"months": [], "revenue": [], "profit": []}
-    g = df.groupby("month").agg(총매출=("총매출", "sum"), 손익=("손익", "sum")).reset_index()
+        return {"months": [], "revenue": [], "expense": [], "profit": []}
+    g = df.groupby("month").agg(총매출=("총매출", "sum"), 총지출=("총지출", "sum"),
+                                손익=("손익", "sum")).reset_index()
+    # 매출·지출 모두 0인 빈 달은 제외
+    g = g[(g["총매출"] != 0) | (g["총지출"] != 0)]
     return {
         "months":  [int(m) for m in g["month"]],
         "revenue": [int(v) for v in g["총매출"]],
+        "expense": [int(v) for v in g["총지출"]],
         "profit":  [int(v) for v in g["손익"]],
     }
 
@@ -460,7 +465,8 @@ async def api_delete_bank(request: Request, year: int, month: int, bank: str = "
 # ── 설정: 미분류 검토 + 규칙 관리 ──────────────────────────────
 @app.get("/api/rules/transactions")
 async def api_rules_tx(request: Request, year: int, month: int,
-                       bank: str = "", unclassified: int = 1):
+                       bank: str = "", unclassified: int = 1,
+                       category: str = "", branch: str = ""):
     require_auth(request)
     from modules.db import get_all_bank_transactions
     df = get_all_bank_transactions(year, month, bank or None)
@@ -468,10 +474,33 @@ async def api_rules_tx(request: Request, year: int, month: int,
         return []
     if unclassified:
         df = df[df.needs_review == 1]
+    if category:
+        df = df[df.category == category]
+    if branch:
+        df = df[df.branch == branch]
     cols = ["id", "bank", "tx_date", "description", "counterpart",
             "deposit", "withdrawal", "branch", "category", "needs_review",
             "classification_source"]
     return df[[c for c in cols if c in df.columns]].fillna("").to_dict("records")
+
+
+class UnclassifyBody(BaseModel):
+    tx_id: int
+
+
+@app.post("/api/rules/unclassify")
+async def api_rules_unclassify(request: Request, body: UnclassifyBody):
+    """분류 취소 — 미분류 상태로 되돌림"""
+    require_auth(request)
+    from modules.db import get_conn
+    conn = get_conn()
+    conn.execute(
+        "UPDATE bank_transactions SET branch='', category='', needs_review=1, "
+        "is_excluded=0, classification_source='' WHERE id=?", (body.tx_id,))
+    conn.commit()
+    conn.close()
+    _clear_cache()
+    return {"ok": True}
 
 
 class ClassifyBody(BaseModel):

@@ -153,6 +153,10 @@ body {
 .loc-grid { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
 @media (max-width:900px) { .loc-grid { grid-template-columns:1fr; } }
 
+/* ── 대시보드 차트+순위 2열 ──────────────────────────────────── */
+.dash-half { display:grid; grid-template-columns:3fr 2fr; gap:16px; }
+@media (max-width:900px) { .dash-half { grid-template-columns:1fr; } }
+
 /* ── 모바일 ─────────────────────────────────────────────────── */
 @media (max-width:767px) {
   .sidebar { display:none; }
