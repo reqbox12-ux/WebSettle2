@@ -919,7 +919,7 @@
             <option value="aggregate">카드사 결과 집계 조회</option>
             <option value="credit">신용카드</option></select>
           <input type="file" id="card-file" accept=".xlsx">
-          <button class="xbtn primary" onclick="upCard()">업로드</button>
+          <button class="xbtn primary" onclick="upCard(event)">업로드</button>
         </div>
 
         <div class="card" style="padding:18px 20px">
@@ -929,14 +929,14 @@
             <option value="hana">🟩 하나은행</option>
             <option value="shinhan">🟦 신한은행</option></select>
           <input type="file" id="bank-file" accept=".xlsx">
-          <button class="xbtn primary" onclick="upBank()">업로드</button>
+          <button class="xbtn primary" onclick="upBank(event)">업로드</button>
         </div>
 
         <div class="card" style="padding:18px 20px">
           <div style="font-weight:800;margin-bottom:4px">💰 급여</div>
           <div style="font-size:12px;color:var(--ink3);margin-bottom:12px">시트: 지점별집계(4대보험) / 사업소득자</div>
           <input type="file" id="pay-file" accept=".xlsx,.xls">
-          <button class="xbtn primary" onclick="upPayroll()">업로드</button>
+          <button class="xbtn primary" onclick="upPayroll(event)">업로드</button>
         </div>
 
         <div class="card" style="padding:18px 20px">
@@ -948,7 +948,7 @@
           <input type="file" id="ins-health" accept=".csv">
           <label style="font-size:11.5px;color:var(--ink3)">고용보험 (.xlsx)</label>
           <input type="file" id="ins-employ" accept=".xlsx">
-          <button class="xbtn primary" onclick="upInsurance()">업로드</button>
+          <button class="xbtn primary" onclick="upInsurance(event)">업로드</button>
         </div>
 
         <div class="card" style="padding:18px 20px">
@@ -996,7 +996,7 @@
     else showToast(d.detail || '복원 실패', 'err');
   };
 
-  window.upInsurance = async function () {
+  window.upInsurance = async function (ev) {
     const fd = new FormData();
     fd.append('year', selYear); fd.append('month', selMonth);
     let any = false;
@@ -1005,52 +1005,80 @@
       if (f) { fd.append(key, f); any = true; }
     }
     if (!any) { showToast('파일을 하나 이상 선택하세요', 'err'); return; }
-    upResult('⏳ 처리 중…');
-    const r = await api('/api/upload/insurance', { method: 'POST', body: fd });
-    const d = r ? await r.json().catch(() => ({})) : {};
-    if (r && r.ok) upResult(`✅ 고지내역 ${d.saved}명 저장 (매칭 ${d.matched} / 미매칭 ${d.unmatched})`);
-    else upResult('❌ ' + (d.detail || '업로드 실패'), true);
+    const btn = ev?.target;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ 처리 중…'; }
+    try {
+      const r = await api('/api/upload/insurance', { method: 'POST', body: fd });
+      const d = r ? await r.json().catch(() => ({})) : {};
+      if (r && r.ok) upResult(`4대보험 고지내역 <b>${d.saved}명</b> 저장<br>직원 매칭 ${d.matched}명 · 미매칭 ${d.unmatched}명`);
+      else upResult(d.detail || '업로드 실패', true);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '업로드'; }
+    }
   };
 
+  // ── 업로드 결과 모달 ───────────────────────────────────────
   function upResult(html, isErr) {
-    document.getElementById('up-result').innerHTML =
-      `<div class="card" style="padding:14px 18px;font-size:13.5px;
-        color:${isErr ? 'var(--red)' : 'var(--pos)'};font-weight:600">${html}</div>`;
+    const old = document.getElementById('up-modal'); if (old) old.remove();
+    const m = document.createElement('div');
+    m.id = 'up-modal';
+    m.innerHTML = `
+      <div style="position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:9998"
+        onclick="document.getElementById('up-modal').remove()"></div>
+      <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;
+        width:min(440px,92vw);background:var(--sf);color:var(--ink);border-radius:16px;
+        padding:28px 26px;box-shadow:0 20px 60px rgba(0,0,0,.35);text-align:center">
+        <div style="font-size:42px;margin-bottom:10px">${isErr ? '❌' : '✅'}</div>
+        <div style="font-size:15px;font-weight:800;margin-bottom:8px">
+          ${isErr ? '업로드 실패' : '업로드 완료'}</div>
+        <div style="font-size:13.5px;color:var(--ink2);line-height:1.7;margin-bottom:18px">${html}</div>
+        <div style="font-size:11.5px;color:var(--ink3);margin-bottom:16px">
+          ${isErr ? '' : `📅 저장 위치: <b>${selYear}년 ${selMonth}월</b> — 대시보드에서 같은 연·월을 선택하면 바로 확인됩니다`}</div>
+        <button class="xbtn primary" style="padding:11px 32px"
+          onclick="document.getElementById('up-modal').remove()">확인</button>
+      </div>`;
+    document.body.appendChild(m);
   }
 
-  async function doUpload(url, fileId, extra = {}) {
+  async function doUpload(url, fileId, extra = {}, btnEl) {
     const f = document.getElementById(fileId).files[0];
     if (!f) { showToast('파일을 선택하세요', 'err'); return; }
     const fd = new FormData();
     fd.append('year', selYear); fd.append('month', selMonth); fd.append('file', f);
     for (const [k, v] of Object.entries(extra)) fd.append(k, v);
-    upResult('⏳ 처리 중…');
-    const r = await api(url, { method: 'POST', body: fd });
-    const d = r ? await r.json().catch(() => ({})) : {};
-    if (r && r.ok) return d;
-    upResult('❌ ' + (d.detail || '업로드 실패'), true);
-    return null;
+    if (btnEl) { btnEl.disabled = true; btnEl.textContent = '⏳ 처리 중…'; }
+    try {
+      const r = await api(url, { method: 'POST', body: fd });
+      const d = r ? await r.json().catch(() => ({})) : {};
+      if (r && r.ok) return d;
+      upResult(d.detail || '서버 오류가 발생했습니다', true);
+      return null;
+    } finally {
+      if (btnEl) { btnEl.disabled = false; btnEl.textContent = '업로드'; }
+    }
   }
 
-  window.upCard = async function () {
+  window.upCard = async function (ev) {
     const kind = document.getElementById('card-kind').value;
-    const d = await doUpload('/api/upload/card', 'card-file', { kind });
-    if (d) upResult(`✅ 카드매출 ${d.count}건 저장 완료` + (d.unmapped ? ` (미매핑 ${d.unmapped}건)` : ''));
+    const d = await doUpload('/api/upload/card', 'card-file', { kind }, ev?.target);
+    if (d) upResult(`카드매출 <b>${d.count}건</b> 저장 완료` +
+      (d.unmapped ? `<br>⚠️ 미매핑 ${d.unmapped}건 — 지점 매핑 확인 필요` : ''));
   };
-  window.upBank = async function () {
+  window.upBank = async function (ev) {
     const bank = document.getElementById('bank-kind').value;
-    const d = await doUpload('/api/upload/bank', 'bank-file', { bank });
-    if (d) upResult(`✅ 통장내역 ${d.count}건 저장 (자동분류 ${d.auto}건${d.ai ? ' / AI ' + d.ai + '건' : ''} / 미분류 ${d.review}건)` +
-      (d.review ? ' — 설정 → 미분류 검토에서 확인하세요' : ''));
+    const d = await doUpload('/api/upload/bank', 'bank-file', { bank }, ev?.target);
+    if (d) upResult(`통장내역 <b>${d.count}건</b> 저장<br>` +
+      `자동분류 ${d.auto}건${d.ai ? ' · AI ' + d.ai + '건' : ''} · 미분류 ${d.review}건` +
+      (d.review ? '<br>📋 미분류는 설정 → 미분류 검토에서 처리하세요' : ''));
   };
-  window.upPayroll = async function () {
-    const d = await doUpload('/api/upload/payroll', 'pay-file');
-    if (d) upResult(`✅ 급여 저장 완료 — ${d.msg}`);
+  window.upPayroll = async function (ev) {
+    const d = await doUpload('/api/upload/payroll', 'pay-file', {}, ev?.target);
+    if (d) upResult(`급여 저장 완료 — <b>${d.msg}</b>`);
   };
   window.delData = async function (kind) {
     if (!confirm(`${selYear}년 ${selMonth}월 ${kind === 'card' ? '카드매출' : '통장내역'}을 삭제할까요?`)) return;
     const r = await api(`/api/upload/${kind}?year=${selYear}&month=${selMonth}`, { method: 'DELETE' });
-    if (r && r.ok) upResult(`✅ ${selYear}년 ${selMonth}월 삭제 완료`);
+    if (r && r.ok) upResult(`${selYear}년 ${selMonth}월 ${kind === 'card' ? '카드매출' : '통장내역'} 삭제 완료`);
   };
 
   /* ════ 설정 (미분류 검토 + 규칙) ═══════════════════════════ */

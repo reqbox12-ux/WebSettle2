@@ -298,6 +298,15 @@ import tempfile
 import os as _os
 
 
+def _clear_cache():
+    """집계 함수의 streamlit 캐시 무효화 — 업로드/삭제 직후 호출 필수"""
+    try:
+        import streamlit as st
+        st.cache_data.clear()
+    except Exception:
+        pass
+
+
 @app.post("/api/upload/card")
 async def api_upload_card(request: Request, year: int = Form(...), month: int = Form(...),
                           kind: str = Form(...), file: UploadFile = File(...)):
@@ -312,9 +321,11 @@ async def api_upload_card(request: Request, year: int = Form(...), month: int = 
         if kind == "aggregate":
             df = parse_card_aggregate(tp, year, month)
             upsert_card_sales(df, "card_aggregate", year, month)
+            _clear_cache()
         else:
             df = parse_credit_card(tp, year, month)
             upsert_card_sales(df, "credit_card", year, month)
+            _clear_cache()
         unmapped = int((df.branch == "미매핑").sum()) if "branch" in df.columns else 0
         return {"ok": True, "count": len(df), "unmapped": unmapped}
     except Exception as e:
@@ -371,6 +382,7 @@ async def api_upload_bank(request: Request, year: int = Form(...), month: int = 
 
         df = recalc_vat(df)
         upsert_bank_transactions(df, bank, year, month)
+        _clear_cache()
         return {"ok": True, "count": len(df),
                 "auto": int((df.needs_review == 0).sum()),
                 "ai": ai_cnt,
@@ -404,6 +416,7 @@ async def api_upload_payroll(request: Request, year: int = Form(...), month: int
                 parts.append(f"프리랜서 {len(df)}건")
         if not parts:
             raise HTTPException(400, f"인식된 시트 없음 (현재: {', '.join(xl.sheet_names)})")
+        _clear_cache()
         return {"ok": True, "msg": " · ".join(parts)}
     except HTTPException:
         raise
@@ -416,6 +429,7 @@ async def api_delete_card(request: Request, year: int, month: int):
     require_auth(request)
     from modules.db import delete_card_sales
     delete_card_sales(year, month)
+    _clear_cache()
     return {"ok": True}
 
 
@@ -424,6 +438,7 @@ async def api_delete_bank(request: Request, year: int, month: int, bank: str = "
     require_auth(request)
     from modules.db import delete_bank_transactions
     delete_bank_transactions(year, month, bank or None)
+    _clear_cache()
     return {"ok": True}
 
 
@@ -458,6 +473,7 @@ async def api_rules_classify(request: Request, body: ClassifyBody):
     require_auth(request)
     from modules.db import update_transaction_classification
     update_transaction_classification(body.tx_id, body.branch, body.category, "manual")
+    _clear_cache()
     if body.add_rule and body.keyword and body.bank:
         from modules.classifier import add_rule
         add_rule(body.bank, body.keyword, body.branch, body.category)
@@ -601,6 +617,7 @@ async def api_bmr_save(request: Request, body: BmrBody):
     data = {c: int(body.data.get(c, 0) or 0) for c in _BMR_COLS}
     data["note"] = str(body.data.get("note", ""))[:200]
     upsert_branch_monthly_revenue(body.year, body.month, body.branch, data)
+    _clear_cache()
     return {"ok": True}
 
 
@@ -749,6 +766,7 @@ async def api_payroll_confirm(request: Request, body: PayrollConfirmBody):
                 errors.append(f"{emp['name']} 저장 실패")
         except Exception as e:
             errors.append(f"{emp['name']}: {e}")
+    _clear_cache()
     return {"ok": ok, "actual_applied": actual_applied, "errors": errors}
 
 
@@ -780,6 +798,7 @@ async def api_upload_insurance(
     if not merged:
         raise HTTPException(400, "파싱된 내역이 없습니다. " + " / ".join(map(str, errs[:3])))
     saved, unmatched = save_insurance_actuals(year, month, merged)
+    _clear_cache()
     return {"ok": True, "saved": saved, "matched": saved - unmatched,
             "unmatched": unmatched, "errors": [str(e) for e in errs[:5]]}
 
