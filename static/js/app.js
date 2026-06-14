@@ -907,6 +907,7 @@
       <table class="tbl">
         <thead><tr>
           ${th('name', '이름', 'left')}${th('branch', '지점', 'left')}${th('emp_type', '유형', 'left')}
+          <th style="text-align:left">CRM 직무</th>
           ${th('base_salary', '기본급')}${th('phone', '전화번호')}${th('email', '이메일', 'left')}
           ${th('join_date', '입사일')}<th></th>
         </tr></thead>
@@ -914,6 +915,7 @@
           <td style="text-align:left;font-weight:600">${e.name}</td>
           <td style="text-align:left">${e.branch || '—'}</td>
           <td style="text-align:left">${TYPE_LBL[e.emp_type] || e.emp_type || '—'}</td>
+          <td style="text-align:left">${(e.role_labels && e.role_labels.length) ? e.role_labels.join(', ') : '<span style="color:var(--ink3)">미지정</span>'}</td>
           <td>${fmtWon(e.base_salary)}</td>
           <td>${e.phone || '—'}</td>
           <td style="text-align:left">${e.email || '—'}</td>
@@ -925,10 +927,21 @@
       </table>`;
   }
 
+  // CRM 직무 메타 (캐시)
+  const ROLE_OPTS = [
+    ['info','인포'], ['trainer','트레이너'], ['golf_pro','골프프로'],
+    ['gx','GX강사'], ['manager','지점관리자'],
+  ];
+
   window.empForm = async function (id) {
     await loadMeta();
     const e = id ? (empCache.find(x => x.id === id) || {}) : {};
     const brOpts = META.branches.map(b => `<option ${b === e.branch ? 'selected' : ''}>${b}</option>`).join('');
+    const myRoles = e.roles || [];
+    const roleChecks = ROLE_OPTS.map(([k, l]) => `
+      <label style="display:inline-flex;align-items:center;gap:6px;font-weight:600;margin-right:14px">
+        <input type="checkbox" class="ef-role" value="${k}" ${myRoles.includes(k) ? 'checked' : ''}
+          onchange="empRoleLimit()"> ${l}</label>`).join('');
     document.getElementById('emp-form').innerHTML = `
       <div class="card" style="padding:18px 20px;margin-bottom:14px">
         <div style="font-weight:800;margin-bottom:12px">${id ? '✏️ 직원 수정' : '➕ 직원 추가'}</div>
@@ -943,6 +956,14 @@
           <label>전화번호<input id="ef-phone" value="${e.phone || ''}" placeholder="01012345678"></label>
           <label>이메일<input id="ef-email" value="${e.email || ''}"></label>
           <label>입사일<input id="ef-join" value="${e.join_date || ''}" placeholder="2026-01-01"></label>
+          <label>주민번호 <span style="font-weight:400;color:var(--ink3)">(멀티지점 묶음키)</span>
+            <input id="ef-idnum" value="${e.id_number || ''}" placeholder="여러 지점 근무 시 동일 입력"></label>
+          <label>정산요율 % <span style="font-weight:400;color:var(--ink3)">(트레이너/프로 %상품)</span>
+            <input id="ef-comm" type="number" step="0.1" value="${e.commission_percent || 0}"></label>
+        </div>
+        <div style="margin-top:14px">
+          <div style="font-weight:700;margin-bottom:6px">CRM 직무 <span style="font-weight:400;color:var(--ink3)">(이 지점 기준 · 최대 2개)</span></div>
+          <div id="ef-roles">${roleChecks}</div>
         </div>
         <div style="margin-top:14px;display:flex;gap:8px">
           <button class="xbtn primary" onclick="empSave(${id || 0})">저장</button>
@@ -950,11 +971,22 @@
         </div></div>`;
   };
 
+  // 직무 최대 2개 제한
+  window.empRoleLimit = function () {
+    const checked = [...document.querySelectorAll('.ef-role:checked')];
+    const boxes = [...document.querySelectorAll('.ef-role')];
+    const limit = checked.length >= 2;
+    boxes.forEach(b => { if (!b.checked) b.disabled = limit; });
+  };
+
   window.empSave = async function (id) {
     const v = (x) => document.getElementById(`ef-${x}`).value.trim();
+    const roles = [...document.querySelectorAll('.ef-role:checked')].map(b => b.value);
     const body = { id, name: v('name'), branch: v('branch'), emp_type: v('type'),
       base_salary: parseInt(v('salary')) || 0, dependents: parseInt(v('dep')) || 1,
-      phone: v('phone'), email: v('email'), join_date: v('join') };
+      phone: v('phone'), email: v('email'), join_date: v('join'),
+      id_number: v('idnum'), commission_percent: parseFloat(v('comm')) || 0,
+      roles };
     if (!body.name) { showToast('이름을 입력하세요', 'err'); return; }
     const r = await api('/api/employees', { method: 'POST', body: JSON.stringify(body) });
     const d = r ? await r.json().catch(() => ({})) : {};

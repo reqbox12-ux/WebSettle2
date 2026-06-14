@@ -6,24 +6,18 @@ DB·비즈니스 로직: 기존 WEBAPP 폴더의 모듈을 그대로 재사용 (
 from __future__ import annotations
 
 import os
-import sys
 import time
 from pathlib import Path
 
-# ── 기존 WEBAPP 모듈 재사용 (집계 로직 공유) ────────────────────
-BASE_DIR   = Path(__file__).parent
-WEBAPP_DIR = (BASE_DIR.parent / "WEBAPP")
-if not WEBAPP_DIR.exists():
-    # NAS Docker 환경: /app/legacy 로 마운트
-    WEBAPP_DIR = Path("/app/legacy")
-sys.path.insert(0, str(WEBAPP_DIR))
+# ── 통합 레포(WebSettle2): domains/modules/shared 가 로컬에 존재 (자립형) ──────────
+# 더 이상 외부 WEBAPP(/app/legacy)에 의존하지 않음.
+BASE_DIR = Path(__file__).parent
 
-# ── DB 선택 ───────────────────────────────────────────────────
-# WEBAPP2/data/settlement.db 가 있으면 그것을 사용 (독립 DB 모드)
-# 없으면 기존 WEBAPP/data/settlement.db 공유 (기본)
-# SETTLEMENT_DB 환경변수가 이미 설정돼 있으면 그것을 최우선
+# ── DB 경로 ───────────────────────────────────────────────────
+# 기본: <repo>/data/settlement.db  (modules.db 가 동일하게 해석 → CRM과 공유)
+# SETTLEMENT_DB 환경변수가 있으면 최우선 (운영/검증 환경 분리용)
 _LOCAL_DB = BASE_DIR / "data" / "settlement.db"
-if not os.getenv("SETTLEMENT_DB") and _LOCAL_DB.exists():
+if not os.getenv("SETTLEMENT_DB"):
     os.environ["SETTLEMENT_DB"] = str(_LOCAL_DB)
 
 from fastapi import FastAPI, Request, HTTPException
@@ -308,8 +302,29 @@ async def api_att_branches(request: Request):
 @app.get("/api/employees")
 async def api_employees(request: Request):
     require_auth(request)
-    from domains.payroll.db import get_all_employees
-    return get_all_employees()
+    from domains.payroll.db import get_all_employees, get_employee_roles, ROLE_LABELS
+    emps = get_all_employees()
+    for e in emps:
+        roles = get_employee_roles(e["id"])
+        e["roles"] = roles
+        e["role_labels"] = [ROLE_LABELS.get(r, r) for r in roles]
+    return emps
+
+
+@app.get("/api/roles/meta")
+async def api_roles_meta(request: Request):
+    """CRM 직무 메타 — ERP 직원편집 UI의 직무 선택용."""
+    require_auth(request)
+    from domains.payroll.db import ROLE_LABELS
+    return [{"value": k, "label": v} for k, v in ROLE_LABELS.items()]
+
+
+@app.get("/api/payroll/crm-confirmed")
+async def api_crm_payroll_confirmed(request: Request, year: int, month: int):
+    """CRM에서 확정된 강사 수업 보수 — ERP에서 조회 (읽기 전용)."""
+    require_auth(request)
+    from domains.branch_app.crm_ext import get_crm_payroll
+    return [r for r in get_crm_payroll(year, month) if r.get("status") == "confirmed"]
 
 
 # ── 데이터 업로드 API ─────────────────────────────────────────
@@ -729,17 +744,26 @@ class EmployeeBody(BaseModel):
     hourly_rate: int = 0
     join_date:   str = ""
     note:        str = ""
+    id_number:   str = ""               # 주민번호 → person_uid(멀티지점 묶음 키)
+    roles:       list[str] = []         # CRM 직무 (최대 2개)
+    commission_percent: float = 0       # 트레이너/프로 %정산 개인요율
 
 
 @app.post("/api/employees")
 async def api_emp_upsert(request: Request, body: EmployeeBody):
     require_auth(request)
-    from domains.payroll.db import upsert_employee, create_employee_account, get_employee_account
+    from domains.payroll.db import (
+        upsert_employee, create_employee_account, get_employee_account,
+        set_employee_roles,
+    )
     data = body.dict()
+    data["meal_allowance"] = data.pop("meal", 0)
     data["is_active"] = 1
     if not data["id"]:
         data.pop("id")
     eid = upsert_employee(data)
+    # CRM 직무 설정 (최대 2개)
+    saved_roles = set_employee_roles(eid, body.roles)
     # 전화번호 있으면 포털 계정 자동 생성
     phone = body.phone.replace("-", "").replace(" ", "")
     acc_msg = ""
@@ -747,7 +771,7 @@ async def api_emp_upsert(request: Request, body: EmployeeBody):
         ok, _ = create_employee_account(eid, phone, phone[-4:])
         if ok:
             acc_msg = f"포털 계정 생성: {phone} / 초기PW {phone[-4:]}"
-    return {"id": eid, "account": acc_msg}
+    return {"id": eid, "account": acc_msg, "roles": saved_roles}
 
 
 @app.delete("/api/employees/{emp_id}")
