@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+  <title>로그인 — 라온스포츠 포털</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/wanteddev/wanted-sans@v1.0.3/packages/wanted-sans/fonts/webfonts/variable/split/WantedSansVariable.min.css">
+  <link rel="stylesheet" href="/static/css/landing.css">
+  <style>
+    /* Extra login-page specifics */
+    .login-headline {
+      font-family: var(--font-display);
+      font-size: 48px;
+      font-weight: 800;
+      line-height: 1.08;
+      letter-spacing: -0.035em;
+      margin: 0 0 16px;
+      white-space: pre-line;
+    }
+    .login-sub {
+      font-size: 14px;
+      line-height: 1.7;
+      color: rgba(255,255,255,.72);
+      max-width: 480px;
+    }
+    .art-logo {
+      display: flex; align-items: center; gap: 12px;
+    }
+    .art-logo .mark {
+      width: 44px; height: 44px; border-radius: 13px;
+      background: var(--accent);
+      color: #fff;
+      display: grid; place-items: center;
+      font-family: var(--font-display);
+      font-weight: 800; font-size: 22px;
+      letter-spacing: -0.02em;
+      box-shadow: inset 0 -3px 0 rgba(0,0,0,.22);
+      flex-shrink: 0;
+    }
+    .art-logo .name {
+      font-family: var(--font-display);
+      font-weight: 800; font-size: 20px;
+      letter-spacing: -0.025em;
+    }
+    .art-logo .sub {
+      font-size: 12px; color: rgba(255,255,255,.55); margin-top: 2px;
+    }
+    .art-footer {
+      font-size: 12px; color: rgba(255,255,255,.4);
+    }
+
+    /* Role toggle in login */
+    .login-role-toggle {
+      display: grid; grid-template-columns: 1fr 1fr;
+      background: var(--surface-3);
+      border: 1px solid var(--border);
+      border-radius: 12px; padding: 4px;
+      gap: 4px;
+      margin-bottom: 22px;
+    }
+    .login-role-toggle button {
+      border: 0; background: none; cursor: pointer;
+      padding: 10px 8px;
+      border-radius: 9px;
+      font-size: 12.5px; font-weight: 600;
+      color: var(--muted);
+      line-height: 1.4;
+      text-align: center;
+    }
+    .login-role-toggle button.on {
+      background: var(--surface);
+      color: var(--ink);
+      box-shadow: var(--shadow-sm);
+    }
+    .login-role-toggle button.on.staff { background: var(--accent); color: #fff; }
+
+    .pw-row {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 13px;
+    }
+    .pw-row a { color: var(--muted); font-size: 12.5px; }
+    .pw-row a:hover { color: var(--ink); }
+
+    .signup-row {
+      display: flex; align-items: center; justify-content: space-between;
+      font-size: 12.5px; color: var(--muted); margin-top: 18px;
+    }
+    .signup-row a { color: var(--muted); }
+    .signup-row a:hover { color: var(--ink); }
+
+    .error-msg {
+      background: var(--accent-soft);
+      border: 1px solid var(--accent);
+      color: var(--accent);
+      border-radius: 10px;
+      padding: 10px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      margin-bottom: 14px;
+      display: none;
+    }
+    .error-msg.show { display: block; }
+
+    .btn-submit {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      width: 100%; height: 48px;
+      background: var(--accent); color: #fff;
+      border: 0; border-radius: 12px;
+      font-size: 15px; font-weight: 700;
+      cursor: pointer;
+      margin-top: 20px;
+      letter-spacing: -0.01em;
+      transition: background .12s, transform .08s;
+    }
+    .btn-submit:hover { background: var(--accent-2); }
+    .btn-submit:active { transform: translateY(1px); }
+    .btn-submit:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-submit svg { width: 18px; height: 18px; }
+
+    /* Dark mode toggle */
+    .dark-toggle {
+      position: fixed; top: 18px; right: 18px;
+      width: 36px; height: 36px; border-radius: 50%;
+      background: rgba(255,255,255,.15);
+      backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,.2);
+      display: grid; place-items: center;
+      cursor: pointer; color: #fff;
+      font-size: 18px;
+    }
+    [data-theme="dark"] .dark-toggle { background: rgba(255,255,255,.08); }
+  </style>
+</head>
+<body>
+  <button class="dark-toggle" id="themeBtn" title="다크모드 전환" onclick="toggleTheme()">🌙</button>
+
+  <div class="login-shell">
+    <!-- Left: Art side -->
+    <div class="login-art">
+      <div class="art-logo">
+        <img src="/static/img/logo.png" alt="LAONSPORTS 로고" style="height:44px;filter:brightness(0) invert(1);object-fit:contain;">
+        <div>
+          <div class="name">LAONSPORTS</div>
+          <div class="sub">지점 통합 포털</div>
+        </div>
+      </div>
+
+      <div>
+        <h1 class="login-headline">오늘의 한 세트,&#10;라온과 함께.</h1>
+        <p class="login-sub">직원과 회원이 같은 공간에서 — 출퇴근부터 GX 등록, 이벤트 참여까지.<br>라온스포츠 통합 포털에서 모든 흐름을 한 번에.</p>
+      </div>
+
+      <div class="art-footer">© 2026 LAONSPORTS · v 3.0.0</div>
+    </div>
+
+    <!-- Right: Form side -->
+    <div class="login-form-side">
+      <div class="login-card">
+        <h1>로그인</h1>
+        <p class="sub">라온스포츠 통합 포털에 오신 것을 환영합니다</p>
+
+        <!-- Role toggle -->
+        <div class="login-role-toggle" id="roleToggle">
+          <button class="on staff" id="btnStaff" onclick="selectRole('staff')">
+            직원으로 로그인<br><span style="font-size:11px;font-weight:500;opacity:.8">전체 메뉴 활성</span>
+          </button>
+          <button id="btnMember" onclick="selectRole('member')">
+            회원으로 로그인<br><span style="font-size:11px;font-weight:500;opacity:.8">수업·이벤트·커뮤니티</span>
+          </button>
+        </div>
+
+        <!-- Error message -->
+        <div class="error-msg" id="errorMsg"></div>
+
+        <!-- Form -->
+        <form id="loginForm" onsubmit="handleLogin(event)">
+          <div class="field">
+            <label class="field-label" for="identifier">아이디 (전화번호)</label>
+            <input class="input" type="text" id="identifier" name="identifier"
+                   placeholder="01012345678" autocomplete="username" required>
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="password">비밀번호</label>
+            <input class="input" type="password" id="password" name="password"
+                   placeholder="••••••••" autocomplete="current-password" required>
+          </div>
+
+          <div class="pw-row">
+            <label class="checkbox">
+              <input type="checkbox" id="keepLogin"> 로그인 유지
+            </label>
+            <a href="#" onclick="openInquiry('pw_reset');return false">비밀번호 찾기</a>
+          </div>
+
+          <button class="btn-submit" type="submit" id="submitBtn">
+            로그인
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </form>
+
+        <div class="signup-row">
+          <span>계정이 없나요?</span>
+          <a href="#" onclick="openInquiry('account');return false">관리자에게 문의</a>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let currentRole = 'staff';
+
+    function selectRole(role) {
+      currentRole = role;
+      const btnStaff = document.getElementById('btnStaff');
+      const btnMember = document.getElementById('btnMember');
+      if (role === 'staff') {
+        btnStaff.className = 'on staff';
+        btnMember.className = '';
+        document.getElementById('identifier').placeholder = '01012345678';
+      } else {
+        btnStaff.className = '';
+        btnMember.className = 'on';
+        document.getElementById('identifier').placeholder = '전화번호';
+      }
+    }
+
+    function showError(msg) {
+      const el = document.getElementById('errorMsg');
+      el.textContent = msg;
+      el.classList.add('show');
+    }
+    function hideError() {
+      document.getElementById('errorMsg').classList.remove('show');
+    }
+
+    async function handleLogin(e) {
+      e.preventDefault();
+      hideError();
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true;
+      btn.textContent = '로그인 중…';
+
+      const identifier = document.getElementById('identifier').value.trim();
+      const password = document.getElementById('password').value;
+      const keepLogin = document.getElementById('keepLogin').checked;
+
+      try {
+        const resp = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: currentRole, identifier, password })
+        });
+        const data = await resp.json();
+        if (!resp.ok) {
+          showError(data.detail || '로그인 정보가 올바르지 않습니다.');
+          return;
+        }
+        // 멀티지점 직원 → 지점 선택 모달
+        if (data.needs_branch_selection) {
+          showBranchPicker(data, password, keepLogin);
+          return;
+        }
+        finishLogin(data, password, keepLogin);
+      } catch (err) {
+        showError('네트워크 오류가 발생했습니다. 다시 시도해 주세요.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '로그인 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+      }
+    }
+
+    // 로그인 성공 처리 — 토큰·직무 저장
+    function finishLogin(data, password, keepLogin) {
+      if (keepLogin) {
+        localStorage.setItem('raon_token', data.token);
+      } else {
+        sessionStorage.setItem('raon_token', data.token);
+        localStorage.removeItem('raon_token');
+      }
+      localStorage.setItem('raon_role', data.role);
+      localStorage.setItem('raon_name', data.name);
+      localStorage.setItem('raon_branch', data.branch || '');
+      localStorage.setItem('raon_admin', data.admin ? '1' : '');
+      localStorage.setItem('raon_roles', JSON.stringify(data.roles || []));
+      if (data.must_change_pw) { showChangePw(password, keepLogin); return; }
+      window.location.href = '/home';
+    }
+
+    // 멀티지점 직원 — 지점 선택 모달
+    function showBranchPicker(data, password, keepLogin) {
+      const old = document.getElementById('brModal');
+      if (old) old.remove();
+      const items = data.branches.map(b => `
+        <button class="br-pick" data-eid="${b.employee_id}"
+          style="width:100%;text-align:left;padding:14px 16px;margin-bottom:8px;border-radius:12px;
+          border:1.5px solid rgba(128,128,128,.3);background:transparent;color:inherit;cursor:pointer">
+          <div style="font-size:15px;font-weight:800">${b.branch}</div>
+          <div style="font-size:12px;opacity:.7;margin-top:2px">${(b.role_labels||[]).join(' · ')}</div>
+        </button>`).join('');
+      const modal = document.createElement('div');
+      modal.id = 'brModal';
+      modal.innerHTML = `
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998"></div>
+        <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);z-index:9999;
+             width:min(420px,92vw);background:var(--card-bg,#fff);color:inherit;border-radius:16px;
+             padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.35)">
+          <div style="font-size:17px;font-weight:800;margin-bottom:4px">근무 지점 선택</div>
+          <div style="font-size:12.5px;opacity:.7;margin-bottom:16px">${data.name}님, 로그인할 지점을 선택하세요.</div>
+          ${items}
+          <div id="brErr" style="color:#E60028;font-size:12.5px;min-height:18px"></div>
+        </div>`;
+      document.body.appendChild(modal);
+      modal.querySelectorAll('.br-pick').forEach(el => {
+        el.addEventListener('click', async () => {
+          const eid = parseInt(el.dataset.eid, 10);
+          try {
+            const r = await fetch('/api/auth/select-branch', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ ticket: data.ticket, employee_id: eid })
+            });
+            const d = await r.json();
+            if (!r.ok) { document.getElementById('brErr').textContent = d.detail || '선택 실패'; return; }
+            modal.remove();
+            finishLogin(d, password, keepLogin);
+          } catch (e) {
+            document.getElementById('brErr').textContent = '네트워크 오류';
+          }
+        });
+      });
+    }
+
+    // ── 문의 / 비밀번호 찾기 팝업 ─────────────────────────────
+    function openInquiry(type) {
+      // 기존 모달 제거
+      const old = document.getElementById('inqModal');
+      if (old) old.remove();
+
+      const isPw = type === 'pw_reset';
+      const title = isPw ? '🔑 비밀번호 초기화 요청' : '📨 관리자에게 문의';
+      const desc  = isPw
+        ? '본인 확인 후 관리자가 비밀번호를 초기화해 드립니다.<br>초기화되면 <b>전화번호 뒷 4자리</b>로 다시 로그인할 수 있습니다.'
+        : '계정 생성·로그인 문제 등을 관리자에게 전달합니다.<br>확인 후 연락드립니다.';
+
+      const modal = document.createElement('div');
+      modal.id = 'inqModal';
+      modal.innerHTML = `
+        <div style="position:fixed;inset:0;background:rgba(0,0,0,.55);z-index:9998"
+             onclick="document.getElementById('inqModal').remove()"></div>
+        <div style="position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
+             z-index:9999;width:min(420px,92vw);background:var(--card-bg,#fff);color:inherit;
+             border-radius:16px;padding:26px 24px;box-shadow:0 20px 60px rgba(0,0,0,.35)">
+          <div style="font-size:17px;font-weight:800;margin-bottom:6px">${title}</div>
+          <div style="font-size:12.5px;opacity:.75;line-height:1.6;margin-bottom:16px">${desc}</div>
+          <input id="inqName"  placeholder="이름" style="width:100%;padding:12px 14px;margin-bottom:8px;
+                 border-radius:10px;border:1.5px solid rgba(128,128,128,.3);font-size:14px;background:transparent;color:inherit">
+          <input id="inqPhone" placeholder="전화번호 (01012345678)" style="width:100%;padding:12px 14px;margin-bottom:8px;
+                 border-radius:10px;border:1.5px solid rgba(128,128,128,.3);font-size:14px;background:transparent;color:inherit">
+          <input id="inqBranch" placeholder="지점명" style="width:100%;padding:12px 14px;margin-bottom:8px;
+                 border-radius:10px;border:1.5px solid rgba(128,128,128,.3);font-size:14px;background:transparent;color:inherit">
+          ${isPw ? '' : `<textarea id="inqMsg" placeholder="문의 내용" rows="3" style="width:100%;padding:12px 14px;margin-bottom:8px;
+                 border-radius:10px;border:1.5px solid rgba(128,128,128,.3);font-size:14px;background:transparent;color:inherit;resize:vertical"></textarea>`}
+          <div id="inqErr" style="color:#E60028;font-size:12.5px;min-height:18px;margin-bottom:6px"></div>
+          <div style="display:flex;gap:8px">
+            <button onclick="document.getElementById('inqModal').remove()"
+                    style="flex:1;padding:13px;border:1.5px solid rgba(128,128,128,.3);border-radius:10px;
+                    background:transparent;color:inherit;font-size:14px;font-weight:600;cursor:pointer">취소</button>
+            <button onclick="submitInquiry('${type}')"
+                    style="flex:2;padding:13px;border:none;border-radius:10px;background:#E60028;
+                    color:#fff;font-size:14px;font-weight:700;cursor:pointer">접수하기</button>
+          </div>
+        </div>`;
+      document.body.appendChild(modal);
+    }
+
+    async function submitInquiry(type) {
+      const name   = document.getElementById('inqName').value.trim();
+      const phone  = document.getElementById('inqPhone').value.trim();
+      const branch = document.getElementById('inqBranch').value.trim();
+      const msgEl  = document.getElementById('inqMsg');
+      const message = msgEl ? msgEl.value.trim() : (type === 'pw_reset' ? '비밀번호 초기화 요청' : '');
+      const errEl  = document.getElementById('inqErr');
+      errEl.textContent = '';
+      if (!name) { errEl.textContent = '이름을 입력하세요.'; return; }
+      if (phone.replace(/[^0-9]/g, '').length < 8) { errEl.textContent = '올바른 전화번호를 입력하세요.'; return; }
+      try {
+        const resp = await fetch('/api/auth/inquiry', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ type, name, phone, branch, message })
+        });
+        const data = await resp.json();
+        if (!resp.ok) { errEl.textContent = data.detail || '접수에 실패했습니다.'; return; }
+        document.getElementById('inqModal').remove();
+        alert('✅ ' + (data.msg || '접수되었습니다.'));
+      } catch (e) {
+        errEl.textContent = '네트워크 오류가 발생했습니다.';
+      }
+    }
+
+    // ── 첫 로그인 비밀번호 변경 강제 ─────────────────────────
+    function showChangePw(currentPw, keepLogin) {
+      const card = document.querySelector('.login-card') || document.body;
+      const form = document.getElementById('loginForm');
+      if (form) form.style.display = 'none';
+      const signup = document.querySelector('.signup-row');
+      if (signup) signup.style.display = 'none';
+
+      const box = document.createElement('div');
+      box.id = 'pwChangeBox';
+      box.innerHTML = `
+        <div style="margin:10px 0 16px;padding:12px 14px;border-radius:10px;
+             background:rgba(230,0,40,.08);border:1px solid rgba(230,0,40,.25);
+             font-size:13px;line-height:1.5">
+          🔐 <b>첫 로그인입니다.</b> 보안을 위해 비밀번호를 변경해야 합니다.<br>
+          <span style="font-size:12px;opacity:.8">최소 8자 · 대문자 + 소문자 + 숫자 포함</span>
+        </div>
+        <div class="field" style="margin-bottom:10px">
+          <input type="password" id="newPw1" placeholder="새 비밀번호"
+                 style="width:100%;padding:13px 14px;border-radius:10px;border:1.5px solid rgba(128,128,128,.3);font-size:14px;background:transparent;color:inherit">
+        </div>
+        <div class="field" style="margin-bottom:6px">
+          <input type="password" id="newPw2" placeholder="새 비밀번호 확인"
+                 style="width:100%;padding:13px 14px;border-radius:10px;border:1.5px solid rgba(128,128,128,.3);font-size:14px;background:transparent;color:inherit">
+        </div>
+        <div id="pwErr" style="color:#E60028;font-size:12.5px;min-height:18px;margin-bottom:8px"></div>
+        <button id="pwSubmit" style="width:100%;padding:14px;border:none;border-radius:10px;
+                background:#E60028;color:#fff;font-size:15px;font-weight:700;cursor:pointer">
+          비밀번호 변경하고 시작하기
+        </button>`;
+      (form ? form.parentNode : card).insertBefore(box, form);
+
+      document.getElementById('pwSubmit').addEventListener('click', async () => {
+        const p1 = document.getElementById('newPw1').value;
+        const p2 = document.getElementById('newPw2').value;
+        const errEl = document.getElementById('pwErr');
+        errEl.textContent = '';
+
+        if (p1 !== p2) { errEl.textContent = '비밀번호가 일치하지 않습니다.'; return; }
+        if (p1.length < 8) { errEl.textContent = '최소 8자 이상이어야 합니다.'; return; }
+        if (!/[A-Z]/.test(p1)) { errEl.textContent = '대문자를 1자 이상 포함해야 합니다.'; return; }
+        if (!/[a-z]/.test(p1)) { errEl.textContent = '소문자를 1자 이상 포함해야 합니다.'; return; }
+        if (!/[0-9]/.test(p1)) { errEl.textContent = '숫자를 1자 이상 포함해야 합니다.'; return; }
+
+        const token = localStorage.getItem('raon_token') || sessionStorage.getItem('raon_token');
+        try {
+          const resp = await fetch('/api/auth/change-password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + token },
+            body: JSON.stringify({ current_password: currentPw, new_password: p1 })
+          });
+          const data = await resp.json();
+          if (!resp.ok) { errEl.textContent = data.detail || '변경에 실패했습니다.'; return; }
+          // 새 토큰으로 교체 후 입장
+          if (keepLogin) localStorage.setItem('raon_token', data.token);
+          else sessionStorage.setItem('raon_token', data.token);
+          window.location.href = '/home';
+        } catch (e) {
+          errEl.textContent = '네트워크 오류가 발생했습니다.';
+        }
+      });
+    }
+
+    function toggleTheme() {
+      const html = document.documentElement;
+      const isDark = html.getAttribute('data-theme') === 'dark';
+      html.setAttribute('data-theme', isDark ? 'light' : 'dark');
+      document.getElementById('themeBtn').textContent = isDark ? '🌙' : '☀️';
+      localStorage.setItem('raon_theme', isDark ? 'light' : 'dark');
+    }
+
+    // Restore theme
+    const savedTheme = localStorage.getItem('raon_theme');
+    if (savedTheme) {
+      document.documentElement.setAttribute('data-theme', savedTheme);
+      document.getElementById('themeBtn').textContent = savedTheme === 'dark' ? '☀️' : '🌙';
+    }
+
+    // If already logged in, redirect
+    const token = localStorage.getItem('raon_token') || sessionStorage.getItem('raon_token');
+    if (token) {
+      window.location.href = '/home';
+    }
+  </script>
+</body>
+</html>

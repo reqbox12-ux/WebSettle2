@@ -1,0 +1,2250 @@
+{
+  "hana": [
+    {
+      "keyword": "BPAY정산",
+      "branch": "다산캠퍼스몰",
+      "category": "기타매출",
+      "count": 80
+    },
+    {
+      "keyword": "tosspaymen",
+      "branch": "위례그린푸르지오",
+      "category": "GX매출",
+      "count": 28
+    },
+    {
+      "keyword": "지방세",
+      "branch": "본사",
+      "category": "기타세금",
+      "count": 21
+    },
+    {
+      "keyword": "tosspaymen",
+      "branch": "양우내안애",
+      "category": "GX매출",
+      "count": 13
+    },
+    {
+      "keyword": "2603산재보험",
+      "branch": "본사",
+      "category": "4대보험료",
+      "count": 10
+    },
+    {
+      "keyword": "2602산재보험",
+      "branch": "본사",
+      "category": "4대보험료",
+      "count": 10
+    },
+    {
+      "keyword": "롯데캐피탈",
+      "branch": "본사",
+      "category": "이자비용",
+      "count": 7
+    },
+    {
+      "keyword": "32298018120142-00001",
+      "branch": "본사",
+      "category": "이자비용",
+      "count": 5
+    },
+    {
+      "keyword": "롯데캐피탈",
+      "branch": "본사",
+      "category": "차량유지비",
+      "count": 5
+    },
+    {
+      "keyword": "코웨이렌탈0",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 5
+    },
+    {
+      "keyword": "32298000971642-00001",
+      "branch": "본사",
+      "category": "이자비용",
+      "count": 4
+    },
+    {
+      "keyword": "SK쉴더스법인영월정료",
+      "branch": "양우내안애",
+      "category": "렌탈비",
+      "count": 4
+    },
+    {
+      "keyword": "단말기관리비-K",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 3
+    },
+    {
+      "keyword": "SK쉴더스강서__월정료",
+      "branch": "마곡13단지",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "SK쉴더스시흥__월정료",
+      "branch": "배곧호반베르디움",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "근로소득세(갑)",
+      "branch": "본사",
+      "category": "기타세금",
+      "count": 3
+    },
+    {
+      "keyword": "DLIVE송파04",
+      "branch": "송파와이즈더샵",
+      "category": "운영경비",
+      "count": 3
+    },
+    {
+      "keyword": "사업소득세",
+      "branch": "본사",
+      "category": "기타세금",
+      "count": 3
+    },
+    {
+      "keyword": "수자인충당금",
+      "branch": "망포한양수자인",
+      "category": "운영경비",
+      "count": 3
+    },
+    {
+      "keyword": "엘지전자구독요금",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "SKB6521714459",
+      "branch": "망포한양수자인",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "단말기관리비-K",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "단말기관리비-K",
+      "branch": "배곧호반베르디움",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "단말기관리비-K",
+      "branch": "마곡13단지",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "잉크몬스터",
+      "branch": "동탄반도유보라",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "하나카드기업",
+      "branch": "본사",
+      "category": "법인카드",
+      "count": 3
+    },
+    {
+      "keyword": "우리금융캐피탈",
+      "branch": "본사",
+      "category": "차량유지비",
+      "count": 3
+    },
+    {
+      "keyword": "LGU+통신넷",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "다본세무사-H",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "2603국민건강",
+      "branch": "본사",
+      "category": "4대보험료",
+      "count": 2
+    },
+    {
+      "keyword": "SK쉴더스법인영월정료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "SK쉴더스서수원월정료",
+      "branch": "호매실금호",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "KT통신요금04",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "DLIVE송파01",
+      "branch": "송파파크하비오푸르지오",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "DLIVE송파02",
+      "branch": "송파파크하비오푸르지오",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "KT0273881804",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "KT0273881801",
+      "branch": "역삼이편한",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "EBS세탁비",
+      "branch": "한국방송공사(EBS)",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "DLIVE경동04",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "2602국민연금",
+      "branch": "본사",
+      "category": "4대보험료",
+      "count": 2
+    },
+    {
+      "keyword": "수원망포한양수자인아파트",
+      "branch": "망포한양수자인",
+      "category": "관리비",
+      "count": 2
+    },
+    {
+      "keyword": "법원행정처",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "삼성힐스 용역비",
+      "branch": "삼성힐스테이트 2차",
+      "category": "외주용역비",
+      "count": 2
+    },
+    {
+      "keyword": "본사 중식대",
+      "branch": "본사",
+      "category": "복리후생비",
+      "count": 2
+    },
+    {
+      "keyword": "현대아쿠아정수기",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "현대아쿠아정수기",
+      "branch": "망포한양수자인",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "현대렌탈케어(주",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "호매실 금호어울림 에듀포레아파트 입주자대표회의",
+      "branch": "호매실금호",
+      "category": "관리비",
+      "count": 2
+    },
+    {
+      "keyword": "주)레드블루-H",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "현대렌탈케어(주",
+      "branch": "동수원자이1차",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "현대렌탈케어(주",
+      "branch": "송파파크하비오푸르지오",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "코웨이렌탈0",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "지티에스앤",
+      "branch": "양우내안애",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "잉크엠코리아",
+      "branch": "마곡13단지",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "역삼고정비",
+      "branch": "역삼이편한",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "온라인잔액증명서발급수수료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "박수명",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 2
+    },
+    {
+      "keyword": "잠실트리지움 소송비용",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 2
+    },
+    {
+      "keyword": "DLIVE경동01",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "DLIVE경동02",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "KT9698525104",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "KT0535107004",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "KT0535107002",
+      "branch": "라온골프 서초",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "KT0535107001",
+      "branch": "라온골프 서초",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "김명진",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "김문석(주영산업)",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "김민정 3월분 -14회차",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "KT통신요금02",
+      "branch": "동탄반도유보라",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "LGU+통신넷",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "KT통신요금01",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "KT통신요금02",
+      "branch": "동수원자이1차",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "KT통신요금01",
+      "branch": "동수원자이1차",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "김주희(동수원인포)퇴직금",
+      "branch": "동수원자이1차",
+      "category": "퇴직금",
+      "count": 1
+    },
+    {
+      "keyword": "김선호 연차수당(잠실)",
+      "branch": "본사",
+      "category": "퇴직금",
+      "count": 1
+    },
+    {
+      "keyword": "김민정2월 -13회차",
+      "branch": "동수원자이1차",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "김민정1월-12회차",
+      "branch": "동수원자이1차",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "KT0273881802",
+      "branch": "역삼이편한",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "KT0203881804",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "KT0203881801",
+      "branch": "망포한양수자인",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "KT0203881802",
+      "branch": "망포한양수자인",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "DLIVE송파03",
+      "branch": "송파와이즈더샵",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "EBS세탁비",
+      "branch": "한국방송공사(EBS)",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "KIGASHPAYE",
+      "branch": "다산캠퍼스몰",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "2603국민연금",
+      "branch": "본사",
+      "category": "4대보험료",
+      "count": 1
+    },
+    {
+      "keyword": "BATCHULUUN",
+      "branch": "다산캠퍼스몰",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "DLIVE방송01",
+      "branch": "송파파크하비오푸르지오",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "DLIVE방송02",
+      "branch": "송파파크하비오푸르지오",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "DLIVE방송04",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "SK쉴더스서수원월정료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "SKB6521714459",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "SK쉴더스-H",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "SK쉴더스강서__월정료",
+      "branch": "마곡13단지",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "SK쉴더스시흥__월정료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "구월 GDR프로그램재설",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월골프5번타석 A/s",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월점산재보험료미납",
+      "branch": "라온골프 구월",
+      "category": "기타보험료",
+      "count": 1
+    },
+    {
+      "keyword": "2602고용보험",
+      "branch": "본사",
+      "category": "4대보험료",
+      "count": 1
+    },
+    {
+      "keyword": "2602국민건강",
+      "branch": "본사",
+      "category": "4대보험료",
+      "count": 1
+    },
+    {
+      "keyword": "1월본사임대료",
+      "branch": "본사",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "25년결산세무조정수수료일부",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "12월본사 중식대",
+      "branch": "본사",
+      "category": "복리후생비",
+      "count": 1
+    },
+    {
+      "keyword": "12월 본사 중식대",
+      "branch": "본사",
+      "category": "복리후생비",
+      "count": 1
+    },
+    {
+      "keyword": "2603고용보험",
+      "branch": "본사",
+      "category": "4대보험료",
+      "count": 1
+    },
+    {
+      "keyword": "3월 본사 임대료",
+      "branch": "본사",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이환불-안주연",
+      "branch": "동수원자이1차",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이환불-박지은",
+      "branch": "동수원자이1차",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이환불-김명진",
+      "branch": "동수원자이1차",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이미정산관리비1회차",
+      "branch": "동수원자이1차",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이1차아파트입주자대표회의",
+      "branch": "동수원자이1차",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이 환불건-장명희",
+      "branch": "동수원자이1차",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이 환불-한유나",
+      "branch": "동수원자이1차",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이 환불-김은경",
+      "branch": "동수원자이1차",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이 1월 관리비",
+      "branch": "동수원자이1차",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이 12월 관리비",
+      "branch": "동수원자이1차",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "동수원1차환불-윤석일",
+      "branch": "동수원자이1차",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "다우오피스1개월연장건",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "다산현대 인테리어대금",
+      "branch": "다산캠퍼스몰",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "다산현대1월 관리비",
+      "branch": "다산캠퍼스몰",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "다우그룹웨어 개인카드결제건",
+      "branch": "본사",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "다우오피스 1개월 연장건",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "다본세무사-H",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "노무사수수료4월분",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "남양주등록면",
+      "branch": "다산캠퍼스몰",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "나이스인프라",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "다산현대 소모품 구매건",
+      "branch": "다산캠퍼스몰",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "다산3월분 관리비",
+      "branch": "다산캠퍼스몰",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "다산 렌탈료(10~1월)",
+      "branch": "다산캠퍼스몰",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "다산 12월 관리비",
+      "branch": "다산캠퍼스몰",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "김지영",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "김하진_헬스3개월",
+      "branch": "본사",
+      "category": "PT매출",
+      "count": 1
+    },
+    {
+      "keyword": "김준",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "김민정(12월분)-11회",
+      "branch": "동수원자이1차",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "마곡카페물품구입",
+      "branch": "마곡13단지",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "마곡카페아이스크림구입",
+      "branch": "마곡13단지",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "마곡환불건-옥민실",
+      "branch": "마곡13단지",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "동탄역반도1.0",
+      "branch": "동탄반도유보라",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "반월퇴사조윤지국민,소득세환급",
+      "branch": "e편한세상반월나노시티역",
+      "category": "퇴직금",
+      "count": 1
+    },
+    {
+      "keyword": "반월카페인건비",
+      "branch": "e편한세상반월나노시티역",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "반월카페 인건비",
+      "branch": "e편한세상반월나노시티역",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "박은영",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "미정산분",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "배곧c1 명절비",
+      "branch": "배곧호반써밋C1",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "배곧C1천국의계단a/s",
+      "branch": "배곧호반써밋C1",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "배곧C1",
+      "branch": "배곧호반써밋C1",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "본사 12월 관리비",
+      "branch": "본사",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "본사 3월 관리비",
+      "branch": "본사",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "본사 식대(12~1)",
+      "branch": "본사",
+      "category": "복리후생비",
+      "count": 1
+    },
+    {
+      "keyword": "본사 임대료",
+      "branch": "본사",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "등기발급 수수료외",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "마곡매출 -자금대체",
+      "branch": "마곡13단지",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "마곡물품구매(마곡에서반환예정",
+      "branch": "마곡13단지",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "동수원자이환불-최미례",
+      "branch": "동수원자이1차",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "문구구입 및 송년회식대",
+      "branch": "본사",
+      "category": "복리후생비",
+      "count": 1
+    },
+    {
+      "keyword": "문구구입및 등기발송",
+      "branch": "본사",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페 머신 A/s 출장비",
+      "branch": "미사강변동원로얄듀크",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "미사22_정수필터",
+      "branch": "미사강변동원로얄듀크",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페정산(12.16~31",
+      "branch": "미사강변동원로얄듀크",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페정산(2.16~28)",
+      "branch": "미사강변동원로얄듀크",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페정산1.16~1.31",
+      "branch": "미사강변동원로얄듀크",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페정산(1.01~15)",
+      "branch": "미사강변동원로얄듀크",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페정산2.01~2.15",
+      "branch": "미사강변동원로얄듀크",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페정산4.01~4.15",
+      "branch": "미사강변동원로얄듀크",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "미정산2회차",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "마곡환불건-위정현",
+      "branch": "마곡13단지",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "메인비즈평가신청수수료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "모두의싸인",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "모두의싸인예치금충전",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "마곡카페 베이커리구매",
+      "branch": "마곡13단지",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "수수료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "송파와이즈더샵입주자",
+      "branch": "송파와이즈더샵",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "서초골프세탁비",
+      "branch": "라온골프 서초",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "서초골프_회원가입원서",
+      "branch": "라온골프 서초",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "서울보증",
+      "branch": "본사",
+      "category": "기타보험료",
+      "count": 1
+    },
+    {
+      "keyword": "서초3월 주차요금",
+      "branch": "라온골프 서초",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "삼성힐스용역비",
+      "branch": "삼성힐스테이트 2차",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "비품구입",
+      "branch": "본사",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "브로제이 사용료",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "사단법인 한국경영혁",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "브로제이4월분",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "브로제이사용료",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "본사책상구입건",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "본사에어컨이전설치비용",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "본사임대료",
+      "branch": "본사",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "본사책상 운송비",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "배곧C1센터폰요금(7~01)",
+      "branch": "배곧호반써밋C1",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "배곧호반카드매출취소건",
+      "branch": "배곧호반베르디움",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "배곧호반소모품구입",
+      "branch": "배곧호반베르디움",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "본사1월관리비",
+      "branch": "본사",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "우리금융캐피탈",
+      "branch": "본사",
+      "category": "이자비용",
+      "count": 1
+    },
+    {
+      "keyword": "온라인부채증명원발급수수료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "역삼체육시설보험갱신",
+      "branch": "역삼이편한",
+      "category": "기타보험료",
+      "count": 1
+    },
+    {
+      "keyword": "역삼E 고정비",
+      "branch": "역삼이편한",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "양우3차산재미납분(9~",
+      "branch": "양우내안애",
+      "category": "기타보험료",
+      "count": 1
+    },
+    {
+      "keyword": "양우3차 계약이행보증",
+      "branch": "양우내안애",
+      "category": "기타보험료",
+      "count": 1
+    },
+    {
+      "keyword": "알바몬등록패키지구입건",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "엘지전자렌탈케어",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "신현경",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "수자인정산",
+      "branch": "망포한양수자인",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "수펙스3월비용",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "신용평가등급 재심사",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "정혜원",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "잠실트리지움항소",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "잠실트리지움소송",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "잠실트리지움반환비용",
+      "branch": "본사",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "잠실트리지움 소송항",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "잠실트리지움 반환",
+      "branch": "본사",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "잉크엠코리아",
+      "branch": "본사",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "잉크몬스터",
+      "branch": "본사",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "이규원(파스까스 파",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "인테리어대금",
+      "branch": "다산캠퍼스몰",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "이서후",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "이형규",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "책상배송료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "진유정",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "주식회사 캐치",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "주)레드블루-H",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "퇴직소득세",
+      "branch": "본사",
+      "category": "기타세금",
+      "count": 1
+    },
+    {
+      "keyword": "토스_20260430",
+      "branch": "위례그린푸르지오",
+      "category": "GX매출",
+      "count": 1
+    },
+    {
+      "keyword": "토스_20260423",
+      "branch": "위례그린푸르지오",
+      "category": "GX매출",
+      "count": 1
+    },
+    {
+      "keyword": "토스_20260406",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "토스_20260323",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "토스_20260319",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "채수미(9회차)",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "하비오전등 수리비용",
+      "branch": "송파파크하비오푸르지오",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "허하영연차,퇴직금(잠실)",
+      "branch": "본사",
+      "category": "퇴직금",
+      "count": 1
+    },
+    {
+      "keyword": "한양수자인매출취소건",
+      "branch": "망포한양수자인",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "한양수자인 회식대",
+      "branch": "망포한양수자인",
+      "category": "복리후생비",
+      "count": 1
+    },
+    {
+      "keyword": "한민철 퇴직금,연차지급(잠실",
+      "branch": "본사",
+      "category": "퇴직금",
+      "count": 1
+    },
+    {
+      "keyword": "하나카드결제",
+      "branch": "본사",
+      "category": "법인카드",
+      "count": 1
+    },
+    {
+      "keyword": "호매실금호계약이행보",
+      "branch": "호매실금호",
+      "category": "기타보험료",
+      "count": 1
+    },
+    {
+      "keyword": "호반베르디움 비품구입개인결제",
+      "branch": "배곧호반베르디움",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "힐스위례환불-박경란(관리비오",
+      "branch": "힐스테이트위례",
+      "category": "환불",
+      "count": 1
+    }
+  ],
+  "shinhan": [
+    {
+      "keyword": "구월식대",
+      "branch": "라온골프 구월",
+      "category": "복리후생비",
+      "count": 16
+    },
+    {
+      "keyword": "KT계좌이체",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 5
+    },
+    {
+      "keyword": "주）레드블루",
+      "branch": "라온골프 서초",
+      "category": "렌탈비",
+      "count": 5
+    },
+    {
+      "keyword": "주）레드블루",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "제일좋은솔루션",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "LGU+81870556",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "구월티업기수리",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 3
+    },
+    {
+      "keyword": "서초세탁비",
+      "branch": "라온골프 서초",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "주）레드블루",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "쿠쿠렌탈료",
+      "branch": "라온골프 서초",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "구월소모품구매",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 3
+    },
+    {
+      "keyword": "바름카드기",
+      "branch": "라온골프 서초",
+      "category": "렌탈비",
+      "count": 3
+    },
+    {
+      "keyword": "제증명수수료",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 3
+    },
+    {
+      "keyword": "중진공대출상환",
+      "branch": "본사",
+      "category": "이자비용",
+      "count": 3
+    },
+    {
+      "keyword": "서초골프공구입",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 2
+    },
+    {
+      "keyword": "코웨이렌탈03",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "코웨이렌탈01",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "코웨이렌탈02",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 2
+    },
+    {
+      "keyword": "구월타석A/s",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 2
+    },
+    {
+      "keyword": "서초오토티수리",
+      "branch": "라온골프 서초",
+      "category": "AS비용",
+      "count": 2
+    },
+    {
+      "keyword": "서초등록면허세",
+      "branch": "라온골프 서초",
+      "category": "기타세금",
+      "count": 2
+    },
+    {
+      "keyword": "최원교",
+      "branch": "라온골프 구월",
+      "category": "기타매출",
+      "count": 2
+    },
+    {
+      "keyword": "1억 대출이자",
+      "branch": "본사",
+      "category": "이자비용",
+      "count": 1
+    },
+    {
+      "keyword": "(주)레드",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "2월법인카드대",
+      "branch": "본사",
+      "category": "법인카드",
+      "count": 1
+    },
+    {
+      "keyword": "2억 대출이자",
+      "branch": "본사",
+      "category": "이자비용",
+      "count": 1
+    },
+    {
+      "keyword": "DLIVE경동",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "DLIVE방송",
+      "branch": "송파파크하비오푸르지오",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "3,4월오토수리",
+      "branch": "본사",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "DLIVE,송파",
+      "branch": "송파파크하비오푸르지오",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "고림3차양우내",
+      "branch": "양우내안애",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "개인결제건",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "LGU+81870556",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "DLVE경동",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "구월문서정주차",
+      "branch": "라온골프 구월",
+      "category": "복리후생비",
+      "count": 1
+    },
+    {
+      "keyword": "구월2월관리비",
+      "branch": "라온골프 구월",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "공동인증수수료",
+      "branch": "본사",
+      "category": "기타지출",
+      "count": 1
+    },
+    {
+      "keyword": "구월11관리비",
+      "branch": "라온골프 구월",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "구월개카결제건",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월관리비선수",
+      "branch": "라온골프 구월",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "구월냉장고구입",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월레인지볼",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월레인지볼구",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월2월세탁비",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "구월12월관리비",
+      "branch": "라온골프 구월",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "구월1월임대료",
+      "branch": "라온골프 구월",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "구월카카오AS",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월정수기필터",
+      "branch": "라온골프 구월",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "구월전기수리비",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월타석센서수",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월티업기교체",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월티업기수",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월폐기물처리",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월타석A/s",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "그랜저리스료(",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "금호ADT캡스",
+      "branch": "호매실금호",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "김소라12월식대",
+      "branch": "라온골프 구월",
+      "category": "복리후생비",
+      "count": 1
+    },
+    {
+      "keyword": "김주원",
+      "branch": "라온골프 서초",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "김지연 구월점",
+      "branch": "라온골프 구월",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "동련",
+      "branch": "본사",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "동수원정수렌탈",
+      "branch": "동수원자이1차",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "구월환불이혜승",
+      "branch": "라온골프 구월",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "루헨스",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "구월모터교체",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월배너",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월배너제작",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월빔설치인건",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월비품개인결",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월소방시설설",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월스크린천구",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월에어컨수리",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월에어컨청소",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월원두구입",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월유니폼세탁",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "구월임대료2월",
+      "branch": "라온골프 구월",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "구월로스트볼",
+      "branch": "라온골프 구월",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "구월3월세탁비",
+      "branch": "라온골프 구월",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "구월7번A/s",
+      "branch": "라온골프 구월",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "본사인터넷",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "본사_관리비",
+      "branch": "본사",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "범용인증수수료",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "방혜진개인결제",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "박영옥",
+      "branch": "라온골프 구월",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "박소연",
+      "branch": "라온골프 서초",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "박상현레슨비환",
+      "branch": "라온골프 서초",
+      "category": "골프매출",
+      "count": 1
+    },
+    {
+      "keyword": "바름카드기",
+      "branch": "본사",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "바디코디문자충",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "미사프린터렌탈",
+      "branch": "미사강변동원로얄듀크",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페정산금",
+      "branch": "미사강변동원로얄듀크",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "미사카페정산",
+      "branch": "미사강변동원로얄듀크",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "매출취소김주원",
+      "branch": "라온골프 서초",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "메모리폼교체",
+      "branch": "라온골프 서초",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "마곡13단지힐스",
+      "branch": "마곡13단지",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "서초1월주차료",
+      "branch": "라온골프 서초",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "서초비품구입",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초볼센서구매",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초스크린천",
+      "branch": "라온골프 서초",
+      "category": "AS비용",
+      "count": 1
+    },
+    {
+      "keyword": "서초오토티수리",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초임대료",
+      "branch": "라온골프 서초",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "서초2월주차료",
+      "branch": "라온골프 서초",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "삼성전자서비스",
+      "branch": "라온골프 서초",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "서초 봉투외",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초개카결제건",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초개인경비사",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초구월소모품",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초구상공회비",
+      "branch": "라온골프 서초",
+      "category": "기타세금",
+      "count": 1
+    },
+    {
+      "keyword": "서초구월전단지",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초배너주문",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "서초10월관리비",
+      "branch": "라온골프 서초",
+      "category": "임차료",
+      "count": 1
+    },
+    {
+      "keyword": "서초12월주차료",
+      "branch": "라온골프 서초",
+      "category": "관리비",
+      "count": 1
+    },
+    {
+      "keyword": "장예림12월식대",
+      "branch": "라온골프 구월",
+      "category": "복리후생비",
+      "count": 1
+    },
+    {
+      "keyword": "인천시지방세",
+      "branch": "본사",
+      "category": "기타세금",
+      "count": 1
+    },
+    {
+      "keyword": "인천시지방세",
+      "branch": "라온골프 구월",
+      "category": "기타세금",
+      "count": 1
+    },
+    {
+      "keyword": "이태자",
+      "branch": "라온골프 구월",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "이우락",
+      "branch": "라온골프 구월",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "이경준(서초블",
+      "branch": "라온골프 서초",
+      "category": "골프매출",
+      "count": 1
+    },
+    {
+      "keyword": "유효진",
+      "branch": "라온골프 서초",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "양우3차GTS",
+      "branch": "양우내안애",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "서초환불이은경",
+      "branch": "라온골프 서초",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "서초환불신경희",
+      "branch": "라온골프 서초",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "서초환불길병완",
+      "branch": "라온골프 서초",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "전진배(서초)",
+      "branch": "라온골프 서초",
+      "category": "골프매출",
+      "count": 1
+    },
+    {
+      "keyword": "제일좋은솔루션",
+      "branch": "본사",
+      "category": "외주용역비",
+      "count": 1
+    },
+    {
+      "keyword": "정현정",
+      "branch": "라온골프 서초",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "전진배",
+      "branch": "라온골프 서초",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "전단지부착",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "최소윤",
+      "branch": "라온골프 구월",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "착오입금분반환",
+      "branch": "라온골프 서초",
+      "category": "환불",
+      "count": 1
+    },
+    {
+      "keyword": "조원아",
+      "branch": "라온골프 서초",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "전단지인쇄",
+      "branch": "라온골프 서초",
+      "category": "비품구매",
+      "count": 1
+    },
+    {
+      "keyword": "쿠쿠렌탈료",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "테슬라4474리스",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "테슬라6827리스",
+      "branch": "본사",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "하비오정수기렌",
+      "branch": "송파파크하비오푸르지오",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "하성원",
+      "branch": "마곡13단지",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "한선희",
+      "branch": "라온골프 구월",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "한양수자인에듀",
+      "branch": "망포한양수자인",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "한창우",
+      "branch": "라온골프 서초",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "허치림",
+      "branch": "라온골프 구월",
+      "category": "기타매출",
+      "count": 1
+    },
+    {
+      "keyword": "호반베르ADT캡",
+      "branch": "배곧호반베르디움",
+      "category": "렌탈비",
+      "count": 1
+    },
+    {
+      "keyword": "회원가입서택배",
+      "branch": "본사",
+      "category": "운영경비",
+      "count": 1
+    },
+    {
+      "keyword": "힐스테이트위례",
+      "branch": "힐스테이트위례",
+      "category": "기타매출",
+      "count": 1
+    }
+  ]
+}
