@@ -75,6 +75,7 @@
     daily:       { label: '일일보고', icon: 'clipboard-list', staffOnly: true, allowedRoles: ['info','trainer','golf_pro','manager'] },
     payroll:     { label: '페이롤',   icon: 'wallet',     staffOnly: true,  allowedRoles: ['trainer','golf_pro','gx','manager'] },
     payments:    { label: '결제현황', icon: 'credit-card',staffOnly: true,  allowedRoles: ['info','manager'] },
+    sms:         { label: '문자발송', icon: 'message-square',staffOnly: true, allowedRoles: ['manager'] },
     approvals:   { label: '결재함',   icon: 'inbox',      staffOnly: true,  allowedRoles: ['manager'] },
     settings:    { label: '설정',     icon: 'settings-2', staffOnly: true,  allowedRoles: ['manager'] },
     shop:        { label: '수업·상품 구매', icon: 'shopping-bag', staffOnly: false, allowedRoles: [], memberOnly: true },
@@ -421,6 +422,7 @@
       case 'daily':       await renderDaily(container);       break;
       case 'payroll':     await renderPayroll(container);     break;
       case 'payments':    await renderPayments(container);    break;
+      case 'sms':         await renderSms(container);         break;
       case 'settings':    await renderSettings(container);    break;
       case 'shop':        await renderShop(container);        break;
       case 'approvals':   await renderApprovals(container);   break;
@@ -654,11 +656,52 @@
           <select id="gx-class" class="inp" style="flex:1;min-width:160px">${opts}</select>
           <input id="gx-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}">
           <button class="xbtn primary" onclick="loadGxAtt()">불러오기</button>
+          <button class="xbtn" onclick="gxReReg()">📨 재등록 안내</button>
         </div>
         <div id="gx-att"></div>` : '<div class="empty">담당 GX 수업이 없습니다</div>'}
       </div></div>`;
     if (window.lucide) lucide.createIcons();
   }
+  window.gxReReg = async function () {
+    const sel = document.getElementById('gx-class');
+    const pid = parseInt(sel.value);
+    const className = sel.options[sel.selectedIndex]?.text || '';
+    // 수강 회원 미리보기
+    const mr = await api(`/api/sms/class-members?gx_product_id=${pid}`);
+    const members = mr && mr.ok ? await mr.json() : [];
+    if (!members.length) { showToast('전화번호가 등록된 수강 회원이 없습니다','err'); return; }
+    // 템플릿 목록
+    const tr = await api('/api/sms/templates');
+    const templates = tr && tr.ok ? await tr.json() : [];
+    createModal({
+      title: `📨 재등록 안내 — ${className} (${members.length}명)`,
+      size: 'lg',
+      fields: [
+        ...(templates.length ? [{ id:'_tpl', label:'템플릿', type:'select',
+          options:['', ...templates.map(t=>t.name)], hint:'선택 시 내용이 채워집니다' }] : []),
+        { id:'message', label:'메시지 (#{이름} 치환)', type:'textarea', rows:5, required:true,
+          placeholder:`#{이름}님, ${className} 재등록 기간입니다. 링크에서 결제해 주세요.` },
+      ],
+      submitLabel: `${members.length}명에게 발송`,
+      onSubmit: async (data) => {
+        if (!data.message.trim()) throw new Error('메시지를 입력하세요');
+        const r = await api('/api/sms/reregister', { method:'POST',
+          body: JSON.stringify({ gx_product_id: pid, message: data.message }) });
+        const d = await r?.json().catch(()=>({}));
+        if (!r?.ok) throw new Error(d.detail||'발송 실패');
+        showToast(`✅ 재등록 안내 발송 ${d.sent}건 / 실패 ${d.failed}건`);
+      }
+    });
+    // 템플릿 선택 시 메시지 채우기
+    setTimeout(()=>{
+      const ts = document.getElementById('modal-_tpl');
+      if (ts) ts.addEventListener('change', ()=>{
+        const t = templates.find(x=>x.name===ts.value);
+        if (t) document.getElementById('modal-message').value = t.content;
+      });
+    }, 200);
+  };
+
   window.loadGxAtt = async function () {
     const pid = document.getElementById('gx-class').value;
     const date = document.getElementById('gx-date').value;
@@ -2156,6 +2199,98 @@
       </div></div>`;
     if (window.lucide) lucide.createIcons();
   }
+
+  // ── 문자 발송 (관리자·매니저) ─────────────────────────────────
+  let _smsTargets = [];   // [{id,name,phone}]
+  async function renderSms(container) {
+    container.innerHTML = '<div class="page"><div class="empty">로딩 중…</div></div>';
+    const branch = user.branch || '';
+    const [mR, tR] = await Promise.all([
+      api(`/api/members?branch=${encodeURIComponent(branch)}`),
+      api('/api/sms/templates'),
+    ]);
+    const members = mR && mR.ok ? await mR.json() : [];
+    const templates = tR && tR.ok ? await tR.json() : [];
+    container.innerHTML = `
+      <div class="page">
+        <div class="card-head"><div><div class="section-title">문자 발송</div>
+          <div class="section-sub">${branch} · 회원 선택 후 일괄 발송 (관리자·매니저 전용)</div></div></div>
+        <div class="grid-2" style="display:grid;grid-template-columns:1.2fr 1fr;gap:16px">
+          <div class="card" style="padding:16px 18px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <b>받는 회원</b>
+              <label style="font-size:12px;cursor:pointer"><input type="checkbox" id="sms-all" onchange="smsToggleAll(this.checked)"> 전체 선택</label>
+            </div>
+            <input class="inp" placeholder="이름·전화 검색" oninput="smsFilterMembers(this.value)" style="width:100%;margin-bottom:8px">
+            <div id="sms-mlist" style="max-height:380px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:6px"></div>
+            <div style="font-size:12px;color:var(--muted);margin-top:6px">선택 <span id="sms-cnt">0</span>명 (전화번호 없는 회원 제외)</div>
+          </div>
+          <div class="card" style="padding:16px 18px">
+            <b>메시지</b>
+            <select class="inp" style="width:100%;margin:8px 0" onchange="smsApplyTemplate(this.value)">
+              <option value="">템플릿 선택…</option>
+              ${templates.map(t=>`<option value="${encodeURIComponent(t.content)}">${t.name}</option>`).join('')}
+            </select>
+            <textarea id="sms-msg" class="inp" rows="6" placeholder="내용 입력 (#{이름} = 회원 이름 치환)" style="width:100%;box-sizing:border-box;resize:vertical"></textarea>
+            <div style="font-size:12px;color:var(--muted);margin:6px 0 10px"><span id="sms-len">0</span>자 · <span id="sms-type">SMS</span></div>
+            <button class="btn primary" style="width:100%" onclick="smsSend()">📨 선택 회원에게 발송</button>
+            <div style="font-size:11.5px;color:var(--muted);margin-top:10px">⚠️ 문자는 발송 건당 비용이 발생합니다. 알림톡 전환 전까지 신중히 사용하세요.</div>
+          </div>
+        </div>
+        <div class="card" style="padding:16px 18px;margin-top:14px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+            <b>문자 템플릿 관리</b>
+            <button class="btn sm" onclick="smsNewTemplate()"><i data-lucide="plus"></i> 템플릿 추가</button>
+          </div>
+          ${templates.length?templates.map(t=>`<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 4px;border-bottom:1px solid var(--border)">
+            <div style="flex:1"><b style="font-size:13px">${t.name}</b><div style="font-size:12px;color:var(--muted);white-space:pre-wrap">${t.content.slice(0,60)}${t.content.length>60?'…':''}</div></div>
+            <button class="btn sm" onclick="smsDelTemplate(${t.id})">🗑️</button></div>`).join(''):'<div style="font-size:13px;color:var(--muted)">등록된 템플릿이 없습니다</div>'}
+        </div>
+      </div>`;
+    if (window.lucide) lucide.createIcons();
+    window._smsMembers = members.filter(m=>m.phone);
+    renderSmsMembers('');
+    const ta = document.getElementById('sms-msg');
+    ta.addEventListener('input', ()=>{ const n=ta.value.length; document.getElementById('sms-len').textContent=n; document.getElementById('sms-type').textContent=n<=90?'SMS':'LMS(장문)'; });
+  }
+  function renderSmsMembers(q) {
+    const el = document.getElementById('sms-mlist'); if (!el) return;
+    const list = (window._smsMembers||[]).filter(m=>!q||m.name.includes(q)||(m.phone||'').includes(q));
+    el.innerHTML = list.map(m=>`<label style="display:flex;align-items:center;gap:8px;padding:5px 6px;font-size:13px;cursor:pointer">
+      <input type="checkbox" class="sms-chk" value="${m.id}" data-name="${m.name}" data-phone="${m.phone}" onchange="smsRecount()">
+      ${m.name} <span style="color:var(--muted)">${m.phone}</span></label>`).join('') || '<div style="font-size:12px;color:var(--muted);padding:8px">회원 없음</div>';
+  }
+  window.smsFilterMembers = function(q){ renderSmsMembers(q); };
+  window.smsToggleAll = function(on){ document.querySelectorAll('.sms-chk').forEach(c=>c.checked=on); smsRecount(); };
+  window.smsRecount = function(){ document.getElementById('sms-cnt').textContent = document.querySelectorAll('.sms-chk:checked').length; };
+  window.smsApplyTemplate = function(enc){ if(enc){ const ta=document.getElementById('sms-msg'); ta.value=decodeURIComponent(enc); ta.dispatchEvent(new Event('input')); } };
+  window.smsSend = async function(){
+    const ids = [...document.querySelectorAll('.sms-chk:checked')].map(c=>parseInt(c.value));
+    const msg = document.getElementById('sms-msg').value.trim();
+    if (!ids.length) { showToast('받는 회원을 선택하세요','err'); return; }
+    if (!msg) { showToast('메시지를 입력하세요','err'); return; }
+    if (!confirm(`${ids.length}명에게 문자를 발송할까요? (비용 발생)`)) return;
+    const r = await api('/api/sms/send', { method:'POST', body: JSON.stringify({ member_ids: ids, message: msg }) });
+    const d = await r?.json().catch(()=>({}));
+    if (r?.ok) showToast(`✅ 발송 ${d.sent}건 / 실패 ${d.failed}건`);
+    else showToast(d.detail||'발송 실패','err');
+  };
+  window.smsNewTemplate = function(){
+    createModal({ title:'문자 템플릿 추가', size:'lg', fields:[
+      { id:'name', label:'템플릿 이름', type:'text', required:true, placeholder:'예: 재등록 안내' },
+      { id:'content', label:'내용 (#{이름} 치환 가능)', type:'textarea', rows:5, required:true,
+        placeholder:'#{이름}님, 6월 요가 재등록 기간입니다. ...' },
+    ], submitLabel:'저장', onSubmit: async (data)=>{
+      const r = await api('/api/sms/templates', { method:'POST', body: JSON.stringify(data) });
+      if(!r?.ok){ const d=await r?.json().catch(()=>({})); throw new Error(d.detail||'저장 실패'); }
+      showToast('✅ 템플릿 저장'); renderSms(document.getElementById('page-content'));
+    }});
+  };
+  window.smsDelTemplate = async function(id){
+    if(!confirm('이 템플릿을 삭제할까요?')) return;
+    const r = await api(`/api/sms/templates/${id}`, { method:'DELETE' });
+    if(r?.ok){ showToast('삭제 완료'); renderSms(document.getElementById('page-content')); }
+  };
 
   // ── 설정 (토스/알리고/입금계좌) ───────────────────────────────
   async function renderSettings(container) {

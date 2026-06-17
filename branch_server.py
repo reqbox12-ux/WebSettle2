@@ -2183,6 +2183,91 @@ async def api_gx_check_open(request: Request, gx_product_id: int):
     return gx_check_and_open(_base_url(request), gx_product_id)
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  문자(SMS) 시스템: 템플릿 + 일괄발송 + 재등록 안내
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.get("/api/sms/templates")
+async def api_sms_templates(request: Request):
+    require_staff(request)
+    from domains.branch_app.pay_sms import list_templates
+    return list_templates()
+
+
+class TemplateBody(BaseModel):
+    name:    str
+    content: str
+
+
+@app.post("/api/sms/templates")
+async def api_sms_template_add(request: Request, body: TemplateBody):
+    require_role(request, "manager")
+    from domains.branch_app.pay_sms import add_template
+    if not body.name.strip() or not body.content.strip():
+        raise HTTPException(status_code=400, detail="이름과 내용을 입력하세요")
+    return {"id": add_template(body.name.strip(), body.content.strip())}
+
+
+@app.delete("/api/sms/templates/{tid}")
+async def api_sms_template_del(request: Request, tid: int):
+    require_role(request, "manager")
+    from domains.branch_app.pay_sms import delete_template
+    delete_template(tid)
+    return {"ok": True}
+
+
+class SmsSendBody(BaseModel):
+    member_ids: list[int] = []
+    message:    str
+
+
+@app.post("/api/sms/send")
+async def api_sms_send(request: Request, body: SmsSendBody):
+    """일괄 문자 발송 — 관리자·지점매니저만 (비용 남용 방지)."""
+    user = require_role(request, "manager")
+    from domains.branch_app.pay_sms import get_members_by_ids, broadcast
+    targets = get_members_by_ids(body.member_ids)
+    if not targets:
+        raise HTTPException(status_code=400, detail="발송 대상(전화번호 보유 회원)이 없습니다")
+    if not body.message.strip():
+        raise HTTPException(status_code=400, detail="메시지를 입력하세요")
+    res = broadcast(targets, body.message, sent_by=user.get("name", ""))
+    return res
+
+
+@app.get("/api/sms/class-members")
+async def api_sms_class_members(request: Request, gx_product_id: int):
+    """GX 수업 수강 회원 — 재등록 안내 대상 미리보기."""
+    require_role(request, "info", "gx", "manager")
+    from domains.branch_app.pay_sms import get_class_members
+    return get_class_members(gx_product_id)
+
+
+class ReRegBody(BaseModel):
+    gx_product_id: int
+    message:       str
+
+
+@app.post("/api/sms/reregister")
+async def api_sms_reregister(request: Request, body: ReRegBody):
+    """재등록 안내 — 인포·GX강사·지점매니저·관리자."""
+    user = require_role(request, "info", "gx", "manager")
+    from domains.branch_app.pay_sms import get_class_members, broadcast
+    # GX강사는 자기 수업만
+    if "gx" in user_roles(user) and not user.get("admin") and \
+       not set(user_roles(user)).intersection({"info", "manager"}):
+        conn = get_conn()
+        owner = conn.execute("SELECT instructor_employee_id FROM products WHERE id=?",
+                             (body.gx_product_id,)).fetchone()
+        conn.close()
+        if not owner or owner[0] != int(user.get("sub") or 0):
+            raise HTTPException(status_code=403, detail="본인 담당 수업만 발송할 수 있습니다")
+    targets = get_class_members(body.gx_product_id)
+    if not targets:
+        raise HTTPException(status_code=400, detail="수강 회원(전화번호 보유)이 없습니다")
+    res = broadcast(targets, body.message, sent_by=user.get("name", ""))
+    return res
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

@@ -30,6 +30,67 @@ def _digits(s: str) -> str:
     return "".join(ch for ch in (s or "") if ch.isdigit())
 
 
+# ── 문자 템플릿 ───────────────────────────────────────────────
+def list_templates() -> list[dict]:
+    conn = get_conn()
+    cur = conn.execute("SELECT id, name, content, sms_type FROM sms_templates WHERE is_active=1 ORDER BY id DESC")
+    rows = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def add_template(name: str, content: str) -> int:
+    conn = get_conn()
+    cur = conn.execute("INSERT INTO sms_templates (name, content, sms_type) VALUES (?,?,?)",
+                       (name, content, "SMS" if len(content) <= 90 else "LMS"))
+    conn.commit(); rid = cur.lastrowid; conn.close()
+    return rid
+
+
+def delete_template(tid: int):
+    conn = get_conn()
+    conn.execute("UPDATE sms_templates SET is_active=0 WHERE id=?", (tid,))
+    conn.commit(); conn.close()
+
+
+# ── 대상 회원 조회 ────────────────────────────────────────────
+def get_class_members(gx_product_id: int) -> list[dict]:
+    """GX 수업 수강 회원 (결제완료 active) — 재등록 안내 대상"""
+    conn = get_conn()
+    cur = conn.execute("""
+        SELECT DISTINCT m.id, m.name, m.phone
+        FROM gx_enrollments e JOIN members m ON e.member_id = m.id
+        WHERE e.gx_product_id=? AND e.status='active' AND m.phone != ''
+    """, (gx_product_id,))
+    rows = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+def get_members_by_ids(member_ids: list[int]) -> list[dict]:
+    if not member_ids:
+        return []
+    conn = get_conn()
+    qs = ",".join("?" * len(member_ids))
+    cur = conn.execute(f"SELECT id, name, phone FROM members WHERE id IN ({qs}) AND phone != ''", member_ids)
+    rows = [dict(zip([d[0] for d in cur.description], r)) for r in cur.fetchall()]
+    conn.close()
+    return rows
+
+
+# ── 일괄 발송 (치환: #{이름}) ─────────────────────────────────
+def broadcast(targets: list[dict], message: str, sent_by: str = "") -> dict:
+    sent = failed = 0
+    for t in targets:
+        msg = message.replace("#{이름}", t.get("name", "")).replace("{이름}", t.get("name", ""))
+        res = send_sms(t.get("phone", ""), msg, title="안내", name=t.get("name", ""), sent_by=sent_by)
+        if res.get("ok"):
+            sent += 1
+        else:
+            failed += 1
+    return {"sent": sent, "failed": failed, "total": len(targets)}
+
+
 # ── 지점 입금계좌 ─────────────────────────────────────────────
 def get_branch_account(branch: str) -> dict:
     conn = get_conn()
