@@ -692,7 +692,8 @@
         </div>
         <div style="font-weight:700;margin:8px 0 4px">자동 집계</div>
         <div style="font-size:13px;opacity:.8;margin-bottom:4px">매출 ${a.sales.length}건 · 수업 ${a.sessions.length}건</div>
-        <textarea id="dr-comment" class="inp" rows="4" placeholder="특이사항·코멘트를 입력하세요">${d.comment||''}</textarea>
+        <textarea id="dr-comment" class="inp" rows="4" placeholder="특이사항·코멘트를 입력하세요"
+          style="width:100%;box-sizing:border-box;resize:vertical;max-width:100%">${d.comment||''}</textarea>
         <div style="margin-top:10px"><button class="xbtn primary" onclick="saveDaily('${d.date}')">보고 제출</button></div>
       </div></div>`;
     if (window.lucide) lucide.createIcons();
@@ -720,9 +721,13 @@
     container.innerHTML = `
       <div class="page"><div class="card">
         <div class="card-head">수업 페이롤
-          <span style="float:right">
-            <input id="pl-y" type="number" value="${window._plY}" style="width:70px" class="inp">
-            <input id="pl-m" type="number" value="${window._plM}" min="1" max="12" style="width:50px" class="inp">
+          <span style="float:right;display:inline-flex;gap:6px;align-items:center">
+            <select id="pl-y" class="inp" style="width:92px">
+              ${(() => { const ny = new Date().getFullYear(); let o=''; for (let y=ny; y>=ny-3; y--) o+=`<option value="${y}" ${y===window._plY?'selected':''}>${y}년</option>`; return o; })()}
+            </select>
+            <select id="pl-m" class="inp" style="width:70px">
+              ${Array.from({length:12},(_,i)=>i+1).map(m=>`<option value="${m}" ${m===window._plM?'selected':''}>${m}월</option>`).join('')}
+            </select>
             <button class="xbtn sm" onclick="reloadPayroll()">조회</button>
             ${isAdmin?`<button class="xbtn sm primary" onclick="confirmPayroll()">월 확정→ERP</button>`:''}
           </span></div>
@@ -1929,10 +1934,8 @@
         { id:'amount',  label:'결제 금액 (원)', type:'number', default:'0', min:0, required:true,
           hint:'상품 기본가와 다르면 수정하세요 (할인 등)' },
         { id:'pay_method', label:'결제 수단', type:'radio', options:[
-          { value:'카드', label:'💳 카드' }, { value:'현금', label:'💵 현금' }, { value:'계좌이체', label:'🏦 계좌이체' },
-        ]},
-        { id:'is_mgmt_fee', label:'관리비 청구 대상', type:'radio', options:[
-          { value:'0', label:'아니오' }, { value:'1', label:'예 (아파트 관리비 청구서 반영)' },
+          { value:'카드', label:'💳 카드' }, { value:'현금', label:'💵 현금' },
+          { value:'계좌이체', label:'🏦 계좌이체' }, { value:'관리비청구', label:'🏢 관리비 청구' },
         ]},
       ],
       submitLabel: '결제 저장',
@@ -1953,13 +1956,15 @@
         }
         const amount = parseInt(data.amount) || 0;
         if (amount <= 0) throw new Error('결제 금액을 입력하세요');
+        // '관리비청구' 결제수단이면 관리비 청구서 반영 플래그 자동 설정
+        const isMgmtFee = data.pay_method === '관리비청구' ? 1 : 0;
 
         const resp = await api('/api/sales', {
           method: 'POST',
           body: JSON.stringify({
             branch, member_id: memberId, member_name: memberName,
             product_id: productId, product_name: productName, category,
-            amount, pay_method: data.pay_method, is_mgmt_fee: parseInt(data.is_mgmt_fee) || 0,
+            amount, pay_method: data.pay_method, is_mgmt_fee: isMgmtFee,
           })
         });
         if (!resp?.ok) {

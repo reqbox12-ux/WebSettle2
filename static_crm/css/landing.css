@@ -451,7 +451,10 @@ a { color: inherit; text-decoration: none; }
   border: 1px solid var(--border); background: var(--surface);
   font-size: 13.5px; color: var(--ink); font-family: inherit;
 }
-textarea.inp { height: auto; padding: 10px 12px; line-height: 1.5; }
+textarea.inp {
+  height: auto; padding: 10px 12px; line-height: 1.5;
+  width: 100%; max-width: 100%; box-sizing: border-box; resize: vertical;
+}
 .inp:focus { outline: none; border-color: var(--accent); }
 
 /* ── KPI 미니 카드 (일일보고 등) ── */
