@@ -833,6 +833,8 @@
 
   // ── Home ──────────────────────────────────────────────────────
   async function renderHome(container) {
+    // 회원: 단순 랜딩 (구매 중심)
+    if (user.role === 'member') return renderMemberHome(container);
     container.innerHTML = '<div class="page"><div class="empty">홈 로딩 중…</div></div>';
     try {
       const resp = await api('/api/home/data');
@@ -895,6 +897,33 @@
   }
 
   window.openEvent = function (id) { showToast('이벤트 상세보기 준비 중'); };
+
+  // ── 회원 단순 랜딩 ────────────────────────────────────────────
+  async function renderMemberHome(container) {
+    const name = user.name || '회원';
+    container.innerHTML = `
+      <div class="page">
+        <div style="background:linear-gradient(135deg,#E60028,#1a1410);color:#fff;
+          border-radius:20px;padding:32px 26px;margin-bottom:20px">
+          <div style="font-size:13px;opacity:.85">라온스포츠 · ${user.branch || ''}</div>
+          <div style="font-size:24px;font-weight:900;margin-top:6px">${name}님, 환영합니다 👋</div>
+          <div style="font-size:13.5px;opacity:.9;margin-top:8px">원하는 수업과 상품을 직접 골라 결제할 수 있어요.</div>
+        </div>
+        <div class="grid-3" style="margin-bottom:8px">
+          ${[['gx','GX 프로그램','activity'],['lesson','PT·골프 레슨','target'],['goods','상품','shopping-bag']].map(([k,l,ic])=>`
+            <div class="card" style="padding:22px 20px;text-align:center;cursor:pointer" onclick="goShop('${k}')">
+              <i data-lucide="${ic}" style="width:30px;height:30px;color:#E60028"></i>
+              <div style="font-size:15px;font-weight:800;margin-top:10px">${l}</div>
+              <div style="font-size:12px;color:var(--muted);margin-top:4px">바로 구매하기 →</div>
+            </div>`).join('')}
+        </div>
+        <button class="btn primary" style="width:100%;height:52px;font-size:16px;margin-top:6px"
+          onclick="navigateTo('shop')"><i data-lucide="shopping-bag"></i> 전체 상품 보기</button>
+        <div id="member-lessons-slot"></div>
+      </div>`;
+    if (window.lucide) lucide.createIcons();
+  }
+  window.goShop = function (cat) { _shopCat = cat; navigateTo('shop'); };
 
   // ── GPS 위치 취득 ─────────────────────────────────────────────
   let _cachedGps = null;
@@ -2165,7 +2194,7 @@
         <div class="card-head"><div><div class="section-title">설정</div>
           <div class="section-sub">${branch} · 입금계좌${isAdmin?' · 토스 · 알리고':''}</div></div></div>
         ${adminBox}
-        <div class="card" style="padding:18px 20px">
+        <div class="card" style="padding:18px 20px;margin-bottom:14px">
           <div style="font-weight:800;margin-bottom:4px">🏦 지점 입금계좌 (계좌이체 안내문자용)</div>
           <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${branch} 지점 계좌</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap">
@@ -2175,8 +2204,33 @@
             <button class="btn primary sm" onclick="saveAcct()">계좌 저장</button>
           </div>
         </div>
+        <div class="card" style="padding:18px 20px">
+          <div style="font-weight:800;margin-bottom:4px">📱 회원 접속 QR코드</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:14px">
+            회원이 이 QR을 스캔하면 포털 로그인 → 수업·상품을 직접 구매할 수 있습니다.<br>
+            데스크/유리문에 붙여 두세요.</div>
+          <div style="display:flex;gap:18px;align-items:center;flex-wrap:wrap">
+            <img id="qr-img" alt="접속 QR" width="180" height="180"
+              style="border:1px solid var(--border);border-radius:12px;background:#fff;padding:8px">
+            <div style="font-size:13px">
+              <div style="color:var(--muted);margin-bottom:4px">접속 주소</div>
+              <div id="qr-url" style="font-weight:700;word-break:break-all"></div>
+              <a id="qr-dl" download="라온스포츠_접속QR.png" class="btn sm" style="margin-top:10px;text-decoration:none">
+                <i data-lucide="download"></i> QR 이미지 저장</a>
+            </div>
+          </div>
+        </div>
       </div>`;
     if (window.lucide) lucide.createIcons();
+    // QR 생성 (외부 무료 API — 접속URL은 비밀 아님)
+    const portalUrl = location.origin;
+    const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=${encodeURIComponent(portalUrl)}`;
+    const img = document.getElementById('qr-img');
+    const dl  = document.getElementById('qr-dl');
+    const urlEl = document.getElementById('qr-url');
+    if (img) img.src = qrSrc;
+    if (dl) dl.href = qrSrc;
+    if (urlEl) urlEl.textContent = portalUrl;
   }
 
   window.saveToss = async function () {
