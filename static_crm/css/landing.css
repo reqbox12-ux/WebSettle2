@@ -947,13 +947,8 @@ textarea.inp {
 
 /* ── Responsive ── */
 @media (max-width: 1100px) {
-  :root { --sidebar-w: 76px; }
-  .sidebar { padding: 18px 8px 8px; }
-  .sidebar .brand .brand-name, .sidebar .brand .brand-sub,
-  .nav-label, .nav-item span:not(.nav-icon), .nav-item .nav-badge,
-  .sidebar-foot .user-meta { display: none !important; }
-  .nav-item { justify-content: center; padding: 12px 8px; }
-  .brand { justify-content: center; padding: 4px 0 14px; }
+  /* 사이드바는 축소하지 않고 248px 고정 유지 (로고 뭉개짐 방지).
+     모바일(720px 이하)에서만 하단바로 전환됨. */
   .search { width: 200px; }
   .grid-3 { grid-template-columns: 1fr 1fr; }
   .grid-4 { grid-template-columns: 1fr 1fr; }
