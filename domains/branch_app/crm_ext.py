@@ -49,6 +49,16 @@ def init_crm_ext_tables():
         if col not in bcols:
             conn.execute(f"ALTER TABLE branches ADD COLUMN {col} TEXT DEFAULT ''")
 
+    # 토스 결제위젯 variantKey
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='payment_config'").fetchone():
+        pcc = [r[1] for r in conn.execute("PRAGMA table_info(payment_config)").fetchall()]
+        if "toss_variant_key" not in pcc:
+            conn.execute("ALTER TABLE payment_config ADD COLUMN toss_variant_key TEXT DEFAULT 'widgetA'")
+
+    # GX 가변요금 적용 토글
+    if "prorate" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN prorate INTEGER DEFAULT 0")
+
     # 재고 임계치 (Phase 6 자동알림)
     icols = [r[1] for r in conn.execute("PRAGMA table_info(inventory_items)").fetchall()]
     if icols and "min_qty" not in icols:

@@ -2176,7 +2176,9 @@
         <label class="field-label">클라이언트 키</label>
         <input class="inp" id="st-ck" value="${pay.toss_client_key||''}" placeholder="test_ck_..." style="width:100%;margin-bottom:8px">
         <label class="field-label">시크릿 키 ${pay.toss_secret_set?`(현재: ${pay.toss_secret_mask})`:''}</label>
-        <input class="inp" id="st-sk" type="password" placeholder="${pay.toss_secret_set?'변경 시에만 입력':'test_sk_...'}" style="width:100%;margin-bottom:10px">
+        <input class="inp" id="st-sk" type="password" placeholder="${pay.toss_secret_set?'변경 시에만 입력':'test_sk_...'}" style="width:100%;margin-bottom:8px">
+        <label class="field-label">결제위젯 variantKey (토스 개발자센터에서 만든 UI 이름)</label>
+        <input class="inp" id="st-vk" value="${pay.toss_variant_key||'widgetA'}" placeholder="예: widgetA" style="width:100%;margin-bottom:10px">
         <button class="btn primary sm" onclick="saveToss()">토스 저장</button>
       </div>
       <div class="card" style="padding:18px 20px;margin-bottom:14px">
@@ -2236,7 +2238,8 @@
   window.saveToss = async function () {
     const r = await api('/api/settings/toss', { method:'POST',
       body: JSON.stringify({ client_key: document.getElementById('st-ck').value.trim(),
-        secret_key: document.getElementById('st-sk').value.trim() }) });
+        secret_key: document.getElementById('st-sk').value.trim(),
+        variant_key: document.getElementById('st-vk').value.trim() || 'widgetA' }) });
     if (r?.ok) { showToast('✅ 토스 설정 저장'); renderSettings(document.getElementById('page-content')); }
     else showToast('저장 실패', 'err');
   };

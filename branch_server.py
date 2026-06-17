@@ -1936,6 +1936,7 @@ async def api_settings_pay_get(request: Request):
         "toss_client_key": pc.get("toss_client_key", ""),  # client key는 공개키라 그대로
         "toss_secret_set": bool(pc.get("toss_secret_key")),
         "toss_secret_mask": mask(pc.get("toss_secret_key", "")),
+        "toss_variant_key": pc.get("toss_variant_key", "") or "widgetA",
         "aligo_user_id": ac.get("user_id", ""),
         "aligo_sender": ac.get("sender", ""),
         "aligo_key_set": bool(ac.get("api_key")),
@@ -1943,8 +1944,9 @@ async def api_settings_pay_get(request: Request):
 
 
 class TossCfgBody(BaseModel):
-    client_key: str
-    secret_key: str = ""   # 빈값이면 기존 유지
+    client_key:  str
+    secret_key:  str = ""    # 빈값이면 기존 유지
+    variant_key: str = "widgetA"
 
 
 @app.post("/api/settings/toss")
@@ -1953,7 +1955,7 @@ async def api_settings_toss(request: Request, body: TossCfgBody):
     from domains.branch_app.db import get_payment_config, save_payment_config
     cur = get_payment_config()
     secret = body.secret_key.strip() or cur.get("toss_secret_key", "")
-    save_payment_config(body.client_key.strip(), secret)
+    save_payment_config(body.client_key.strip(), secret, body.variant_key.strip() or "widgetA")
     return {"ok": True}
 
 
@@ -2067,11 +2069,13 @@ async def pay_page(request: Request, token: str):
     order = get_order_by_token(token)
     if not order:
         return templates.TemplateResponse(request=request, name="pay.html",
-            context={"error": "유효하지 않은 결제 링크입니다.", "order": None, "client_key": ""})
-    ck = get_payment_config().get("toss_client_key", "")
+            context={"error": "유효하지 않은 결제 링크입니다.", "order": None,
+                     "client_key": "", "variant_key": "widgetA"})
+    cfg = get_payment_config()
     return templates.TemplateResponse(request=request, name="pay.html",
-        context={"order": order, "client_key": ck, "error": None,
-                 "already": order["status"] == "paid"})
+        context={"order": order, "client_key": cfg.get("toss_client_key", ""),
+                 "variant_key": cfg.get("toss_variant_key", "") or "widgetA",
+                 "error": None, "already": order["status"] == "paid"})
 
 
 class ConfirmBody(BaseModel):

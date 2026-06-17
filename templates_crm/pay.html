@@ -83,7 +83,7 @@
       msgEl.textContent = '토스 키가 설정되지 않았습니다. 관리자에게 문의하세요.';
     } else {
       // ── v2 결제위젯 (widgets) — 토스 개발자센터 등록 UI(variantKey) 사용 ──
-      const VARIANT_KEY = 'widgetA';   // 토스 결제위젯 UI 이름
+      const VARIANT_KEY = "{{ variant_key }}" || 'widgetA';   // 설정에서 입력
       (async () => {
         try {
           const tossPayments = TossPayments(CLIENT_KEY);

@@ -940,20 +940,21 @@ def get_payment_config() -> dict:
     return row or {"toss_client_key": "", "toss_secret_key": ""}
 
 
-def save_payment_config(client_key: str, secret_key: str):
+def save_payment_config(client_key: str, secret_key: str, variant_key: str = None):
     conn = get_conn()
     existing = conn.execute("SELECT id FROM payment_config LIMIT 1").fetchone()
     if existing:
-        conn.execute("""
-            UPDATE payment_config
-            SET toss_client_key=?, toss_secret_key=?, updated_at=datetime('now','localtime')
-            WHERE id=?
-        """, (client_key, secret_key, existing[0]))
+        if variant_key is None:
+            conn.execute("""UPDATE payment_config
+                SET toss_client_key=?, toss_secret_key=?, updated_at=datetime('now','localtime')
+                WHERE id=?""", (client_key, secret_key, existing[0]))
+        else:
+            conn.execute("""UPDATE payment_config
+                SET toss_client_key=?, toss_secret_key=?, toss_variant_key=?, updated_at=datetime('now','localtime')
+                WHERE id=?""", (client_key, secret_key, variant_key, existing[0]))
     else:
-        conn.execute("""
-            INSERT INTO payment_config (toss_client_key, toss_secret_key)
-            VALUES (?,?)
-        """, (client_key, secret_key))
+        conn.execute("""INSERT INTO payment_config (toss_client_key, toss_secret_key, toss_variant_key)
+            VALUES (?,?,?)""", (client_key, secret_key, variant_key or "widgetA"))
     conn.commit()
     conn.close()
 
