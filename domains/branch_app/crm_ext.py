@@ -31,6 +31,23 @@ def init_crm_ext_tables():
         conn.execute("ALTER TABLE products ADD COLUMN session_rate INTEGER DEFAULT 0")
     if "instructor_employee_id" not in pcols:
         conn.execute("ALTER TABLE products ADD COLUMN instructor_employee_id INTEGER DEFAULT 0")  # GX 담당강사
+    # GX 최소/최대 인원 + 수강권 방식(횟수권/기간권)
+    if "min_headcount" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN min_headcount INTEGER DEFAULT 0")   # GX 최소개강 인원
+    if "max_headcount" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN max_headcount INTEGER DEFAULT 0")   # GX 최대 인원(0=capacity)
+    if "pass_type" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pass_type TEXT DEFAULT 'count'")    # 'count'|'period'
+    if "pass_count" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pass_count INTEGER DEFAULT 0")      # 횟수권 횟수
+    if "pass_days" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pass_days INTEGER DEFAULT 30")      # 기간권 일수
+
+    # 지점 입금계좌 (계좌이체 안내문자용)
+    bcols = [r[1] for r in conn.execute("PRAGMA table_info(branches)").fetchall()]
+    for col in ("bank", "account_no", "account_holder"):
+        if col not in bcols:
+            conn.execute(f"ALTER TABLE branches ADD COLUMN {col} TEXT DEFAULT ''")
 
     # 재고 임계치 (Phase 6 자동알림)
     icols = [r[1] for r in conn.execute("PRAGMA table_info(inventory_items)").fetchall()]
@@ -207,6 +224,44 @@ def init_crm_ext_tables():
             status           TEXT DEFAULT 'open',
             approval_item_id INTEGER DEFAULT 0,
             created_at       TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── Phase 7: 결제 주문(토스 링크/셀프구매) ──────────────
+        CREATE TABLE IF NOT EXISTS payment_orders (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            token         TEXT UNIQUE NOT NULL,          -- 단축URL 토큰
+            order_id      TEXT UNIQUE NOT NULL,          -- 토스 orderId
+            branch        TEXT NOT NULL,
+            member_id     INTEGER DEFAULT 0,
+            member_name   TEXT DEFAULT '',
+            member_phone  TEXT DEFAULT '',
+            product_id    INTEGER DEFAULT 0,
+            product_name  TEXT DEFAULT '',
+            category      TEXT DEFAULT '',
+            base_amount   INTEGER DEFAULT 0,             -- VAT 제외 상품가
+            amount        INTEGER NOT NULL,              -- 실제 청구액
+            pay_method    TEXT DEFAULT '토스',
+            instructor_employee_id INTEGER DEFAULT 0,
+            channel       TEXT DEFAULT 'link',           -- 'link'(직원발송) | 'self'(회원셀프)
+            status        TEXT DEFAULT 'pending',        -- pending|paid|failed|canceled
+            toss_payment_key TEXT DEFAULT '',
+            sale_id       INTEGER DEFAULT 0,
+            created_by    TEXT DEFAULT '',
+            paid_at       TEXT,
+            created_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- GX 개강대기 신청 (최소인원 미달 시)
+        CREATE TABLE IF NOT EXISTS gx_applications (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch        TEXT NOT NULL,
+            gx_product_id INTEGER NOT NULL,
+            member_id     INTEGER NOT NULL,
+            member_name   TEXT DEFAULT '',
+            member_phone  TEXT DEFAULT '',
+            status        TEXT DEFAULT 'waiting',        -- waiting|notified|converted|canceled
+            created_at    TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(gx_product_id, member_id)
         );
     """)
     conn.commit()

@@ -1901,6 +1901,278 @@ async def api_erp_pending(request: Request, branch: str = ""):
     }
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  설정: 토스 / 알리고 / 지점 입금계좌  (admin 전용)
+# ═══════════════════════════════════════════════════════════════════════════════
+def _require_admin(request: Request) -> dict:
+    user = require_staff(request)
+    if not user.get("admin"):
+        raise HTTPException(status_code=403, detail="관리자 전용 기능입니다")
+    return user
+
+
+def _base_url(request: Request) -> str:
+    """문자 링크용 외부 접속 주소. 운영도메인 우선, 없으면 요청 host."""
+    import os as _os
+    env = _os.getenv("PORTAL_BASE_URL")
+    if env:
+        return env.rstrip("/")
+    return str(request.base_url).rstrip("/")
+
+
+@app.get("/api/settings/pay")
+async def api_settings_pay_get(request: Request):
+    _require_admin(request)
+    from domains.branch_app.db import get_payment_config, get_aligo_config
+    pc = get_payment_config(); ac = get_aligo_config()
+    def mask(k): return (k[:8] + "…" + k[-4:]) if k and len(k) > 14 else ("설정됨" if k else "")
+    return {
+        "toss_client_key": pc.get("toss_client_key", ""),  # client key는 공개키라 그대로
+        "toss_secret_set": bool(pc.get("toss_secret_key")),
+        "toss_secret_mask": mask(pc.get("toss_secret_key", "")),
+        "aligo_user_id": ac.get("user_id", ""),
+        "aligo_sender": ac.get("sender", ""),
+        "aligo_key_set": bool(ac.get("api_key")),
+    }
+
+
+class TossCfgBody(BaseModel):
+    client_key: str
+    secret_key: str = ""   # 빈값이면 기존 유지
+
+
+@app.post("/api/settings/toss")
+async def api_settings_toss(request: Request, body: TossCfgBody):
+    _require_admin(request)
+    from domains.branch_app.db import get_payment_config, save_payment_config
+    cur = get_payment_config()
+    secret = body.secret_key.strip() or cur.get("toss_secret_key", "")
+    save_payment_config(body.client_key.strip(), secret)
+    return {"ok": True}
+
+
+class AligoCfgBody(BaseModel):
+    api_key: str = ""
+    user_id: str
+    sender:  str
+
+
+@app.post("/api/settings/aligo")
+async def api_settings_aligo(request: Request, body: AligoCfgBody):
+    _require_admin(request)
+    from domains.branch_app.db import get_aligo_config, save_aligo_config
+    cur = get_aligo_config()
+    key = body.api_key.strip() or cur.get("api_key", "")
+    save_aligo_config(key, body.user_id.strip(), body.sender.strip())
+    return {"ok": True}
+
+
+@app.get("/api/settings/branch-account")
+async def api_branch_account_get(request: Request, branch: str = ""):
+    user = require_staff(request)
+    from domains.branch_app.pay_sms import get_branch_account
+    return get_branch_account(_scope_branch(user, branch) or user.get("branch", ""))
+
+
+class BranchAcctBody(BaseModel):
+    branch:         str = ""
+    bank:           str = ""
+    account_no:     str = ""
+    account_holder: str = ""
+
+
+@app.post("/api/settings/branch-account")
+async def api_branch_account_save(request: Request, body: BranchAcctBody):
+    user = require_role(request, "manager")
+    br = _scope_branch(user, body.branch) or user.get("branch", "")
+    conn = get_conn()
+    conn.execute("UPDATE branches SET bank=?, account_no=?, account_holder=? WHERE name=?",
+                 (body.bank.strip(), body.account_no.strip(), body.account_holder.strip(), br))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  결제: 계좌이체 안내 / 토스 결제링크 / 결제페이지 / 승인콜백 / 현황판
+# ═══════════════════════════════════════════════════════════════════════════════
+class TransferBody(BaseModel):
+    branch:       str = ""
+    member_name:  str
+    member_phone: str
+    product_name: str
+    amount:       int
+
+
+@app.post("/api/pay/transfer-guide")
+async def api_transfer_guide(request: Request, body: TransferBody):
+    user = require_role(request, "info", "trainer", "golf_pro", "manager")
+    from domains.branch_app.pay_sms import send_transfer_guide
+    br = _scope_branch(user, body.branch) or user.get("branch", "")
+    res = send_transfer_guide(branch=br, member_name=body.member_name,
+                              member_phone=body.member_phone,
+                              product_name=body.product_name, amount=body.amount)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error", "문자 발송 실패"))
+    return {"ok": True}
+
+
+class OrderBody(BaseModel):
+    branch:       str = ""
+    member_id:    int = 0
+    member_name:  str
+    member_phone: str = ""
+    product_id:   int = 0
+    product_name: str
+    category:     str = ""
+    base_amount:  int = 0
+    amount:       int
+    instructor_employee_id: int = 0
+    send_link:    int = 1    # 1=문자 발송, 0=링크만 생성(QR 등)
+
+
+@app.post("/api/pay/toss-link")
+async def api_toss_link(request: Request, body: OrderBody):
+    """직원이 토스 결제링크를 만들어 회원에게 문자 발송."""
+    user = require_role(request, "info", "trainer", "golf_pro", "manager")
+    from domains.branch_app.pay_sms import create_order, send_payment_link
+    br = _scope_branch(user, body.branch) or user.get("branch", "")
+    if body.amount <= 0:
+        raise HTTPException(status_code=400, detail="결제 금액을 입력하세요")
+    order = create_order(
+        branch=br, member_id=body.member_id, member_name=body.member_name,
+        member_phone=body.member_phone, product_id=body.product_id,
+        product_name=body.product_name, category=body.category,
+        base_amount=body.base_amount, amount=body.amount, pay_method="토스",
+        instructor_employee_id=body.instructor_employee_id, channel="link",
+        created_by=user.get("name", ""))
+    link = f"{_base_url(request)}/p/{order['token']}"
+    if body.send_link and body.member_phone:
+        send_payment_link(base_url=_base_url(request), order=order,
+                          member_name=body.member_name, member_phone=body.member_phone,
+                          product_name=body.product_name, amount=body.amount)
+    return {"ok": True, "token": order["token"], "link": link}
+
+
+@app.get("/p/{token}")
+async def pay_page(request: Request, token: str):
+    """단축URL 결제 페이지 (회원이 문자 링크로 접속)."""
+    from domains.branch_app.pay_sms import get_order_by_token
+    from domains.branch_app.db import get_payment_config
+    order = get_order_by_token(token)
+    if not order:
+        return templates.TemplateResponse(request=request, name="pay.html",
+            context={"error": "유효하지 않은 결제 링크입니다.", "order": None, "client_key": ""})
+    ck = get_payment_config().get("toss_client_key", "")
+    return templates.TemplateResponse(request=request, name="pay.html",
+        context={"order": order, "client_key": ck, "error": None,
+                 "already": order["status"] == "paid"})
+
+
+class ConfirmBody(BaseModel):
+    order_id:     str
+    payment_key:  str
+    amount:       int
+
+
+@app.post("/api/pay/confirm")
+async def api_pay_confirm(request: Request, body: ConfirmBody):
+    """토스 결제창 성공 후 승인 확정 (인증 불필요 — orderId/amount 서버검증)."""
+    from domains.branch_app.pay_sms import confirm_order
+    res = confirm_order(body.order_id, body.payment_key, body.amount)
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error", "결제 승인 실패"))
+    return {"ok": True}
+
+
+@app.get("/api/pay/orders")
+async def api_pay_orders(request: Request, branch: str = "", status: str = ""):
+    """결제 현황판."""
+    user = require_staff(request)
+    br = _scope_branch(user, branch) or user.get("branch", "")
+    conn = get_conn()
+    q = "SELECT * FROM payment_orders WHERE branch=?"
+    args = [br]
+    if status:
+        q += " AND status=?"; args.append(status)
+    q += " ORDER BY created_at DESC LIMIT 100"
+    rows = _rows(conn.execute(q, args))
+    conn.close()
+    return rows
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  회원 셀프구매 + GX 신청/개강
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.get("/api/my/products")
+async def api_my_products(request: Request, category: str = ""):
+    """회원이 구매 가능한 상품 (자기 지점)."""
+    user = require_member(request)
+    br = user.get("branch", "")
+    conn = get_conn()
+    q = "SELECT * FROM products WHERE branch=? AND is_active=1"
+    args = [br]
+    if category:
+        q += " AND category=?"; args.append(category)
+    q += " ORDER BY category, name"
+    rows = _rows(conn.execute(q, args))
+    conn.close()
+    return rows
+
+
+class SelfBuyBody(BaseModel):
+    product_id: int
+
+
+@app.post("/api/my/buy")
+async def api_my_buy(request: Request, body: SelfBuyBody):
+    """회원 셀프구매 — 주문 생성 후 결제 토큰 반환. GX 최소인원 미달이면 신청만."""
+    user = require_member(request)
+    from domains.branch_app.crm_ext import get_product, charge_amount
+    from domains.branch_app.pay_sms import create_order, gx_apply, gx_headcounts
+    product = get_product(body.product_id)
+    if not product or not product.get("is_active"):
+        raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다")
+    br = user.get("branch", "")
+    mid = int(user.get("sub") or 0)
+    mname = user.get("name", "")
+    # 회원 전화
+    conn = get_conn()
+    mrow = conn.execute("SELECT phone FROM members WHERE id=?", (mid,)).fetchone()
+    conn.close()
+    mphone = mrow[0] if mrow else ""
+
+    # GX 최소개강 인원 체크
+    if product.get("category") == "gx":
+        hc = gx_headcounts(product["id"])
+        if hc["min"] > 0 and (hc["enrolled"] + hc["waiting"] + 1) < hc["min"]:
+            gx_apply(branch=br, gx_product_id=product["id"], member_id=mid,
+                     member_name=mname, member_phone=mphone)
+            need = hc["min"] - (hc["enrolled"] + hc["waiting"] + 1)
+            return {"applied": True,
+                    "msg": f"개강 대기 신청 완료! 최소 개강 인원까지 {need}명 남았습니다. "
+                           f"인원이 충족되면 결제 안내 문자를 보내드립니다."}
+        if hc["max"] and hc["enrolled"] >= hc["max"]:
+            raise HTTPException(status_code=400, detail="정원이 마감되었습니다")
+
+    base = product.get("price", 0)
+    amount = charge_amount(base, "토스")   # 셀프구매는 토스(카드) → VAT 가산
+    order = create_order(
+        branch=br, member_id=mid, member_name=mname, member_phone=mphone,
+        product_id=product["id"], product_name=product["name"],
+        category=product.get("category", ""), base_amount=base, amount=amount,
+        pay_method="토스", channel="self", created_by="")
+    return {"applied": False, "token": order["token"],
+            "link": f"{_base_url(request)}/p/{order['token']}"}
+
+
+@app.post("/api/gx/check-open")
+async def api_gx_check_open(request: Request, gx_product_id: int):
+    """관리자/매니저가 GX 개강 충족 여부 확인 → 충족 시 대기자 일괄 안내."""
+    user = require_role(request, "manager")
+    from domains.branch_app.pay_sms import gx_check_and_open
+    return gx_check_and_open(_base_url(request), gx_product_id)
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn
