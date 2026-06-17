@@ -713,27 +713,34 @@ def upsert_product(data: dict) -> int:
             UPDATE products
             SET name=?, price=?, instructor_name=?, days=?, start_time=?, end_time=?,
                 capacity=?, lesson_type=?, sessions=?, is_active=?,
-                pay_type=?, session_rate=?, instructor_employee_id=?
+                pay_type=?, session_rate=?, instructor_employee_id=?,
+                min_headcount=?, max_headcount=?, pass_type=?, pass_count=?, pass_days=?
             WHERE id=?
         """, (data["name"], data.get("price", 0), data.get("instructor_name", ""),
               data.get("days", ""), data.get("start_time", ""), data.get("end_time", ""),
               data.get("capacity", 0), data.get("lesson_type", ""), data.get("sessions", 0),
               data.get("is_active", 1),
               data.get("pay_type", ""), data.get("session_rate", 0),
-              data.get("instructor_employee_id", 0), data["id"]))
+              data.get("instructor_employee_id", 0),
+              data.get("min_headcount", 0), data.get("max_headcount", 0),
+              data.get("pass_type", "count"), data.get("pass_count", 0), data.get("pass_days", 30),
+              data["id"]))
         rid = data["id"]
     else:
         cur = conn.execute("""
             INSERT INTO products (branch, category, name, price, instructor_name, days,
                                   start_time, end_time, capacity, lesson_type, sessions,
-                                  pay_type, session_rate, instructor_employee_id)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                  pay_type, session_rate, instructor_employee_id,
+                                  min_headcount, max_headcount, pass_type, pass_count, pass_days)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
         """, (data["branch"], data["category"], data["name"], data.get("price", 0),
               data.get("instructor_name", ""), data.get("days", ""),
               data.get("start_time", ""), data.get("end_time", ""),
               data.get("capacity", 0), data.get("lesson_type", ""), data.get("sessions", 0),
               data.get("pay_type", ""), data.get("session_rate", 0),
-              data.get("instructor_employee_id", 0)))
+              data.get("instructor_employee_id", 0),
+              data.get("min_headcount", 0), data.get("max_headcount", 0),
+              data.get("pass_type", "count"), data.get("pass_count", 0), data.get("pass_days", 30)))
         rid = cur.lastrowid
     conn.commit()
     conn.close()

@@ -74,11 +74,15 @@
     instructors: { label: '강사',    icon: 'user-check', staffOnly: true,  allowedRoles: ['trainer','golf_pro','gx','manager'] },
     daily:       { label: '일일보고', icon: 'clipboard-list', staffOnly: true, allowedRoles: ['info','trainer','golf_pro','manager'] },
     payroll:     { label: '페이롤',   icon: 'wallet',     staffOnly: true,  allowedRoles: ['trainer','golf_pro','gx','manager'] },
+    payments:    { label: '결제현황', icon: 'credit-card',staffOnly: true,  allowedRoles: ['info','manager'] },
     approvals:   { label: '결재함',   icon: 'inbox',      staffOnly: true,  allowedRoles: ['manager'] },
+    settings:    { label: '설정',     icon: 'settings-2', staffOnly: true,  allowedRoles: ['manager'] },
+    shop:        { label: '수업·상품 구매', icon: 'shopping-bag', staffOnly: false, allowedRoles: [], memberOnly: true },
   };
 
   // 현재 사용자가 접근 가능한 페이지인지
   function canAccessPage(cfg, u) {
+    if (cfg.memberOnly && u.role !== 'member') return false;
     if (cfg.staffOnly && u.role !== 'staff') return false;
     return hasRole(u, cfg.allowedRoles);
   }
@@ -416,6 +420,9 @@
       case 'gx':          await renderGx(container);          break;
       case 'daily':       await renderDaily(container);       break;
       case 'payroll':     await renderPayroll(container);     break;
+      case 'payments':    await renderPayments(container);    break;
+      case 'settings':    await renderSettings(container);    break;
+      case 'shop':        await renderShop(container);        break;
       case 'approvals':   await renderApprovals(container);   break;
       default:            container.innerHTML = '<div class="page"><div class="empty">페이지 없음</div></div>';
     }
@@ -1848,10 +1855,21 @@
           { id:'capacity', label:'정원 (명)', type:'number', default:'20', min:1, row:'dt' },
           { id:'start_time', label:'시작 시간', type:'time', default:'10:00', row:'tm' },
           { id:'end_time',   label:'종료 시간', type:'time', default:'11:00', row:'tm' },
+          { id:'min_headcount', label:'최소 개강 인원', type:'number', default:'0', min:0, row:'hc',
+            hint:'0이면 제한 없음. 미달 시 신청만 받고 충족되면 자동 안내' },
+          { id:'max_headcount', label:'최대 인원', type:'number', default:'0', min:0, row:'hc' },
+          { id:'pass_type', label:'수강권 방식', type:'radio', options:[
+            { value:'count', label:'횟수권' }, { value:'period', label:'기간권' },
+          ]},
+          { id:'pass_count', label:'횟수 (횟수권)', type:'number', default:'10', min:1, row:'ps' },
+          { id:'pass_days',  label:'유효일수 (기간권)', type:'number', default:'30', min:1, row:'ps' },
         ],
         submitLabel: 'GX 등록',
         onSubmit: async (data) => submitProduct({ ...data, category:'gx',
-          price: parseInt(data.price)||0, capacity: parseInt(data.capacity)||20 }),
+          price: parseInt(data.price)||0, capacity: parseInt(data.capacity)||20,
+          min_headcount: parseInt(data.min_headcount)||0, max_headcount: parseInt(data.max_headcount)||0,
+          pass_type: data.pass_type||'count', pass_count: parseInt(data.pass_count)||0,
+          pass_days: parseInt(data.pass_days)||30 }),
       });
     } else if (category === 'lesson') {
       createModal({
@@ -1935,30 +1953,58 @@
           hint:'상품 기본가와 다르면 수정하세요 (할인 등)' },
         { id:'pay_method', label:'결제 수단', type:'radio', options:[
           { value:'카드', label:'💳 카드' }, { value:'현금', label:'💵 현금' },
-          { value:'계좌이체', label:'🏦 계좌이체' }, { value:'관리비청구', label:'🏢 관리비 청구' },
+          { value:'계좌이체', label:'🏦 계좌이체(안내문자)' }, { value:'토스', label:'📲 토스(결제링크)' },
+          { value:'관리비청구', label:'🏢 관리비 청구' },
         ]},
       ],
       submitLabel: '결제 저장',
       onSubmit: async (data) => {
         // 회원 매칭
         let memberId = 0, memberName = data.member_direct || '';
+        let memberPhone = '';
         if (data.member && data.member !== '직접 입력') {
           const idx = membOpts.indexOf(data.member);
-          if (idx >= 0) { memberId = members[idx].id; memberName = members[idx].name; }
+          if (idx >= 0) { memberId = members[idx].id; memberName = members[idx].name; memberPhone = members[idx].phone || ''; }
         }
         // 상품 매칭
-        let productId = 0, productName = data.product, category = '';
+        let productId = 0, productName = data.product, category = '', basePrice = 0;
         const pIdx = prodOpts.indexOf(data.product);
         if (pIdx >= 0) {
           productId   = products[pIdx].id;
           productName = products[pIdx].name;
           category    = products[pIdx].category;
+          basePrice   = products[pIdx].price || 0;
         }
         const amount = parseInt(data.amount) || 0;
         if (amount <= 0) throw new Error('결제 금액을 입력하세요');
-        // '관리비청구' 결제수단이면 관리비 청구서 반영 플래그 자동 설정
-        const isMgmtFee = data.pay_method === '관리비청구' ? 1 : 0;
 
+        // ── 계좌이체: 안내 문자 발송 ──
+        if (data.pay_method === '계좌이체') {
+          if (!memberPhone) throw new Error('계좌이체 안내는 전화번호가 있는 회원만 가능합니다');
+          const r = await api('/api/pay/transfer-guide', { method:'POST',
+            body: JSON.stringify({ branch, member_name: memberName, member_phone: memberPhone,
+              product_name: productName, amount }) });
+          if (!r?.ok) { const d = await r?.json().catch(()=>({})); throw new Error(d?.detail||'문자 발송 실패'); }
+          showToast('🏦 계좌이체 안내 문자를 발송했습니다');
+          if (currentPage === 'members') loadMembers('');
+          return;
+        }
+
+        // ── 토스: 결제링크 생성 + 문자 ──
+        if (data.pay_method === '토스') {
+          if (!memberPhone) throw new Error('토스 결제링크는 전화번호가 있는 회원만 가능합니다');
+          const r = await api('/api/pay/toss-link', { method:'POST',
+            body: JSON.stringify({ branch, member_id: memberId, member_name: memberName,
+              member_phone: memberPhone, product_id: productId, product_name: productName,
+              category, base_amount: basePrice, amount, send_link: 1 }) });
+          const d = await r?.json().catch(()=>({}));
+          if (!r?.ok) throw new Error(d?.detail||'링크 생성 실패');
+          showToast('📲 결제 링크 문자를 발송했습니다');
+          return;
+        }
+
+        // ── 카드/현금/관리비청구: 즉시 매출 기록 ──
+        const isMgmtFee = data.pay_method === '관리비청구' ? 1 : 0;
         const resp = await api('/api/sales', {
           method: 'POST',
           body: JSON.stringify({
@@ -1972,7 +2018,6 @@
           throw new Error(d?.detail || '저장 실패');
         }
         showToast('✅ 결제가 등록되었습니다');
-        // 회원 화면이면 목록 갱신, 아니면 상품 화면 갱신
         if (currentPage === 'members') loadMembers('');
         else renderClasses(document.getElementById('page-content'));
       }
@@ -2054,6 +2099,159 @@
         renderInstructors(document.getElementById('page-content'));
       }
     });
+  };
+
+  // ── 결제 현황판 ───────────────────────────────────────────────
+  async function renderPayments(container) {
+    container.innerHTML = '<div class="page"><div class="empty">로딩 중…</div></div>';
+    const branch = user.branch || '';
+    const r = await api(`/api/pay/orders?branch=${encodeURIComponent(branch)}`);
+    const orders = r && r.ok ? await r.json() : [];
+    const stLbl = { pending:'<span class="badge warn">대기</span>', paid:'<span class="badge ok">완료</span>',
+                    failed:'<span class="badge red">실패</span>', canceled:'<span class="badge outline">취소</span>' };
+    const chLbl = { link:'직원발송', self:'셀프구매' };
+    const rows = orders.map(o => `
+      <tr><td>${(o.created_at||'').slice(5,16)}</td>
+        <td style="text-align:left">${o.member_name||'—'}</td>
+        <td style="text-align:left">${o.product_name}</td>
+        <td style="font-weight:700">${(o.amount||0).toLocaleString()}</td>
+        <td>${o.pay_method}</td><td>${chLbl[o.channel]||o.channel}</td>
+        <td>${stLbl[o.status]||o.status}</td></tr>`).join('');
+    container.innerHTML = `
+      <div class="page"><div class="card">
+        <div class="card-head">결제 현황 <span style="font-size:12px;color:var(--muted)">최근 100건</span></div>
+        ${orders.length ? `<table class="tbl"><thead><tr><th>일시</th><th style="text-align:left">회원</th>
+          <th style="text-align:left">상품</th><th>금액</th><th>수단</th><th>경로</th><th>상태</th></tr></thead>
+          <tbody>${rows}</tbody></table>` : '<div class="empty">결제 내역이 없습니다</div>'}
+        <div style="font-size:12px;opacity:.6;margin-top:8px">토스 링크/셀프구매는 회원이 결제 완료해야 '완료'로 바뀝니다.</div>
+      </div></div>`;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  // ── 설정 (토스/알리고/입금계좌) ───────────────────────────────
+  async function renderSettings(container) {
+    container.innerHTML = '<div class="page"><div class="empty">로딩 중…</div></div>';
+    const branch = user.branch || '';
+    const isAdmin = user.admin;
+    const [pR, aR] = await Promise.all([
+      isAdmin ? api('/api/settings/pay') : Promise.resolve(null),
+      api(`/api/settings/branch-account?branch=${encodeURIComponent(branch)}`),
+    ]);
+    const pay = pR && pR.ok ? await pR.json() : null;
+    const acct = aR && aR.ok ? await aR.json() : { bank:'', account_no:'', account_holder:'' };
+
+    const adminBox = isAdmin && pay ? `
+      <div class="card" style="padding:18px 20px;margin-bottom:14px">
+        <div style="font-weight:800;margin-bottom:4px">📲 토스페이먼츠 (본사 공통)</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">테스트키는 test_ck_ / test_sk_ 로 시작합니다</div>
+        <label class="field-label">클라이언트 키</label>
+        <input class="inp" id="st-ck" value="${pay.toss_client_key||''}" placeholder="test_ck_..." style="width:100%;margin-bottom:8px">
+        <label class="field-label">시크릿 키 ${pay.toss_secret_set?`(현재: ${pay.toss_secret_mask})`:''}</label>
+        <input class="inp" id="st-sk" type="password" placeholder="${pay.toss_secret_set?'변경 시에만 입력':'test_sk_...'}" style="width:100%;margin-bottom:10px">
+        <button class="btn primary sm" onclick="saveToss()">토스 저장</button>
+      </div>
+      <div class="card" style="padding:18px 20px;margin-bottom:14px">
+        <div style="font-weight:800;margin-bottom:12px">✉️ 알리고 문자 (본사 공통)</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
+          <input class="inp" id="st-auid" value="${pay.aligo_user_id||''}" placeholder="알리고 아이디" style="width:160px">
+          <input class="inp" id="st-asender" value="${pay.aligo_sender||''}" placeholder="발신번호" style="width:160px">
+          <input class="inp" id="st-akey" type="password" placeholder="${pay.aligo_key_set?'API키(변경 시만)':'API 키'}" style="width:200px">
+        </div>
+        <button class="btn primary sm" onclick="saveAligo()">알리고 저장</button>
+      </div>` : '';
+
+    container.innerHTML = `
+      <div class="page">
+        <div class="card-head"><div><div class="section-title">설정</div>
+          <div class="section-sub">${branch} · 입금계좌${isAdmin?' · 토스 · 알리고':''}</div></div></div>
+        ${adminBox}
+        <div class="card" style="padding:18px 20px">
+          <div style="font-weight:800;margin-bottom:4px">🏦 지점 입금계좌 (계좌이체 안내문자용)</div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:12px">${branch} 지점 계좌</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <input class="inp" id="ac-bank" value="${acct.bank||''}" placeholder="은행 (예: 신한)" style="width:130px">
+            <input class="inp" id="ac-no" value="${acct.account_no||''}" placeholder="계좌번호" style="width:200px">
+            <input class="inp" id="ac-holder" value="${acct.account_holder||''}" placeholder="예금주" style="width:130px">
+            <button class="btn primary sm" onclick="saveAcct()">계좌 저장</button>
+          </div>
+        </div>
+      </div>`;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  window.saveToss = async function () {
+    const r = await api('/api/settings/toss', { method:'POST',
+      body: JSON.stringify({ client_key: document.getElementById('st-ck').value.trim(),
+        secret_key: document.getElementById('st-sk').value.trim() }) });
+    if (r?.ok) { showToast('✅ 토스 설정 저장'); renderSettings(document.getElementById('page-content')); }
+    else showToast('저장 실패', 'err');
+  };
+  window.saveAligo = async function () {
+    const r = await api('/api/settings/aligo', { method:'POST',
+      body: JSON.stringify({ api_key: document.getElementById('st-akey').value.trim(),
+        user_id: document.getElementById('st-auid').value.trim(),
+        sender: document.getElementById('st-asender').value.trim() }) });
+    if (r?.ok) { showToast('✅ 알리고 설정 저장'); renderSettings(document.getElementById('page-content')); }
+    else showToast('저장 실패', 'err');
+  };
+  window.saveAcct = async function () {
+    const r = await api('/api/settings/branch-account', { method:'POST',
+      body: JSON.stringify({ branch: user.branch||'', bank: document.getElementById('ac-bank').value.trim(),
+        account_no: document.getElementById('ac-no').value.trim(),
+        account_holder: document.getElementById('ac-holder').value.trim() }) });
+    if (r?.ok) showToast('✅ 입금계좌 저장');
+    else { const d = await r?.json().catch(()=>({})); showToast(d.detail||'저장 실패', 'err'); }
+  };
+
+  // ── 회원 셀프구매 ─────────────────────────────────────────────
+  const SHOP_CAT = { gx:{label:'GX 프로그램',icon:'activity'}, lesson:{label:'레슨(PT·골프)',icon:'target'}, goods:{label:'상품',icon:'shopping-bag'} };
+  let _shopCat = 'gx';
+
+  async function renderShop(container) {
+    container.innerHTML = `
+      <div class="page">
+        <div class="card-head"><div><div class="section-title">수업·상품 구매</div>
+          <div class="section-sub">${user.branch} · 원하는 항목을 선택해 결제하세요</div></div></div>
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          ${Object.entries(SHOP_CAT).map(([k,c])=>`
+            <button class="btn ${k===_shopCat?'primary':''} sm" onclick="shopCat('${k}')">
+              <i data-lucide="${c.icon}"></i> ${c.label}</button>`).join('')}
+        </div>
+        <div id="shop-list"><div class="empty">로딩 중…</div></div>
+      </div>`;
+    if (window.lucide) lucide.createIcons();
+    loadShop();
+  }
+  window.shopCat = function (c) { _shopCat = c; renderShop(document.getElementById('page-content')); };
+
+  async function loadShop() {
+    const r = await api(`/api/my/products?category=${_shopCat}`);
+    const items = r && r.ok ? await r.json() : [];
+    const el = document.getElementById('shop-list');
+    if (!el) return;
+    el.innerHTML = `<div class="grid-3">
+      ${items.map(p => {
+        const vat = Math.round((p.price||0)*1.1);
+        let detail = '';
+        if (p.category==='gx') detail = `<div style="font-size:12px;color:var(--muted)">${p.days||'매일'} ${p.start_time||''}~${p.end_time||''}<br>강사 ${p.instructor_name||'미정'} · ${p.pass_type==='period'?(p.pass_days+'일권'):(p.pass_count+'회권')}</div>`;
+        else if (p.category==='lesson') detail = `<div style="font-size:12px;color:var(--muted)">${p.lesson_type||''} · ${p.sessions||0}회</div>`;
+        return `<div class="card" style="padding:18px 20px">
+          <div style="font-size:15px;font-weight:800;margin-bottom:6px">${p.name}</div>
+          ${detail}
+          <div style="font-size:20px;font-weight:900;color:var(--accent);margin:10px 0">${vat.toLocaleString()}원</div>
+          <button class="btn primary" style="width:100%" onclick="buyProduct(${p.id})">구매하기</button>
+        </div>`;
+      }).join('') || '<div class="empty" style="grid-column:1/-1">판매 중인 항목이 없습니다</div>'}
+    </div>`;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  window.buyProduct = async function (pid) {
+    const r = await api('/api/my/buy', { method:'POST', body: JSON.stringify({ product_id: pid }) });
+    const d = await r?.json().catch(()=>({}));
+    if (!r?.ok) { showToast(d.detail||'구매 실패', 'err'); return; }
+    if (d.applied) { alert(d.msg); return; }   // GX 개강대기
+    location.href = d.link;                     // 토스 결제페이지로 이동
   };
 
   // ── Navigation ────────────────────────────────────────────────

@@ -1359,6 +1359,12 @@ class ProductBody(BaseModel):
     gx_base_amount:      int = 0
     gx_base_headcount:   int = 0
     gx_extra_per_person: int = 0
+    # GX 최소/최대 인원 + 수강권 방식
+    min_headcount:   int = 0
+    max_headcount:   int = 0
+    pass_type:       str = "count"   # 'count'|'period'
+    pass_count:      int = 0
+    pass_days:       int = 30
 
 
 @app.post("/api/products")
