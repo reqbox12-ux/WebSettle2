@@ -1248,6 +1248,8 @@ class MemberBody(BaseModel):
     status:     str = "active"
     pin:        str = ""
     note:       str = ""
+    dong:       str = ""
+    ho:         str = ""
 
 
 @app.post("/api/members")
@@ -1274,6 +1276,8 @@ class MemberPatchBody(BaseModel):
     gender:     Optional[str] = None
     status:     Optional[str] = None
     note:       Optional[str] = None
+    dong:       Optional[str] = None
+    ho:         Optional[str] = None
 
 
 @app.patch("/api/members/{member_id}")
@@ -1286,6 +1290,14 @@ async def api_members_patch(request: Request, member_id: int, body: MemberPatchB
     merged  = {**existing, **updates, "id": member_id}
     upsert_member(merged)
     return {"ok": True}
+
+
+@app.get("/api/members/{member_id}/sales")
+async def api_member_sales(request: Request, member_id: int):
+    """회원 결제(구매) 내역"""
+    require_staff(request)
+    from domains.branch_app.db import get_sales_by_member
+    return get_sales_by_member(member_id)
 
 
 @app.get("/api/members/{member_id}/memberships")

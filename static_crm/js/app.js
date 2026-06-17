@@ -99,6 +99,32 @@
    * fields: [{ id, label, type, placeholder, required, options, hint, accept, row }]
    * type: text | textarea | number | date | time | select | radio | file | hidden
    */
+  // 자유 HTML 모달 (상세보기 등). footerHtml: 푸터 버튼 HTML
+  function openHtmlModal(title, bodyHtml, footerHtml = '') {
+    closeModal();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'modal-overlay';
+    overlay.addEventListener('click', e => { if (e.target === overlay) closeModal(); });
+    const modal = document.createElement('div');
+    modal.className = 'modal modal-lg';
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">${title}</div>
+        <button class="modal-close" onclick="closeModal()">
+          <i data-lucide="x" style="width:18px;height:18px"></i>
+        </button>
+      </div>
+      <div class="modal-body">${bodyHtml}</div>
+      <div class="modal-footer">
+        <button class="btn" onclick="closeModal()">닫기</button>
+        ${footerHtml}
+      </div>`;
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+    if (window.lucide) lucide.createIcons();
+  }
+
   function createModal({ title, fields = [], onSubmit, submitLabel = '저장', size = '' }) {
     closeModal();
 
@@ -1495,7 +1521,10 @@
       <div class="page">
         <div class="card-head">
           <div><div class="section-title">회원 관리</div><div class="section-sub">${user.branch}</div></div>
-          <button class="btn primary" onclick="modalNewMember()"><i data-lucide="user-plus"></i> 신규 등록</button>
+          <div style="display:flex;gap:8px">
+            <button class="btn" onclick="modalNewSale()"><i data-lucide="credit-card"></i> 결제 등록</button>
+            <button class="btn primary" onclick="modalNewMember()"><i data-lucide="user-plus"></i> 신규 등록</button>
+          </div>
         </div>
         <div style="margin-bottom:14px">
           <input class="input" id="memberSearch" placeholder="이름 또는 전화번호 검색…" style="max-width:300px"
@@ -1516,13 +1545,13 @@
     if (!el) return;
     el.innerHTML = `
       <table class="table">
-        <thead><tr><th>이름</th><th>전화번호</th><th>이메일</th><th>가입일</th><th>상태</th></tr></thead>
+        <thead><tr><th>이름</th><th>전화번호</th><th>동/호</th><th>가입일</th><th>상태</th></tr></thead>
         <tbody>
           ${members.map(m => `
-            <tr class="row-hover" style="cursor:pointer" onclick="modalViewMember(${m.id},'${(m.name||'').replace(/'/g,"\\'")}','${m.phone||''}','${m.email||''}','${m.join_date||''}','${m.status||'active'}','${m.note||''}')">
+            <tr class="row-hover" style="cursor:pointer" onclick="viewMember(${m.id})">
               <td><b>${m.name}</b></td>
               <td>${m.phone || '—'}</td>
-              <td style="color:var(--muted);font-size:13px">${m.email || '—'}</td>
+              <td>${(m.dong || m.ho) ? `${m.dong||''}동 ${m.ho||''}호`.trim() : '—'}</td>
               <td>${m.join_date || '—'}</td>
               <td><span class="badge ${m.status==='active'?'ok':'outline'}">${m.status==='active'?'활성':'비활성'}</span></td>
             </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted)">회원 없음</td></tr>'}
@@ -1539,6 +1568,8 @@
       fields: [
         { id:'name',       label:'이름',     type:'text',   required:true, placeholder:'회원 이름', row:'nm' },
         { id:'phone',      label:'전화번호', type:'text',   placeholder:'010-0000-0000', row:'nm' },
+        { id:'dong',       label:'동',       type:'text',   placeholder:'예: 101', row:'dh' },
+        { id:'ho',         label:'호',       type:'text',   placeholder:'예: 1203', row:'dh' },
         { id:'email',      label:'이메일',   type:'text',   placeholder:'example@email.com', row:'em' },
         { id:'birth_date', label:'생년월일', type:'date',   row:'em' },
         { id:'gender',     label:'성별',     type:'select',
@@ -1559,25 +1590,88 @@
     });
   };
 
-  window.modalViewMember = function (id, name, phone, email, joinDate, status, note) {
+  // ── 회원 상세 보기 (수정 아님) ──────────────────────────────
+  window.viewMember = async function (id) {
+    const [mR, sR] = await Promise.all([
+      api(`/api/members/${id}`),
+      api(`/api/members/${id}/sales`),
+    ]);
+    if (!mR || !mR.ok) { showToast('회원 정보를 불러오지 못했습니다', 'err'); return; }
+    const m = await mR.json();
+    const sales = sR && sR.ok ? await sR.json() : [];
+
+    const totalPaid = sales.reduce((s, x) => s + (x.amount || 0), 0);
+    const info = (lbl, val) => `
+      <div style="display:flex;justify-content:space-between;padding:7px 0;
+        border-bottom:1px solid rgba(128,128,128,.14);font-size:13.5px">
+        <span style="color:var(--muted)">${lbl}</span>
+        <span style="font-weight:600;color:var(--ink)">${val || '—'}</span></div>`;
+
+    const salesRows = sales.length ? sales.map(s => `
+      <tr><td>${(s.sale_date || s.created_at || '').slice(0,10)}</td>
+        <td style="text-align:left">${s.product_name || '—'}</td>
+        <td>${PROD_CAT[s.category]?.label?.replace(' 프로그램','') || s.category || '—'}</td>
+        <td style="font-weight:700">${(s.amount||0).toLocaleString()}원</td>
+        <td>${s.pay_method || '—'}</td></tr>`).join('')
+      : '<tr><td colspan="5" style="text-align:center;color:var(--muted)">구매 내역 없음</td></tr>';
+
+    openHtmlModal(`회원 정보 — ${m.name}`, `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;margin-bottom:6px">
+        <div>
+          ${info('이름', m.name)}
+          ${info('전화번호', m.phone)}
+          ${info('동/호', (m.dong || m.ho) ? `${m.dong||''}동 ${m.ho||''}호`.trim() : '')}
+          ${info('이메일', m.email)}
+        </div>
+        <div>
+          ${info('생년월일', m.birth_date)}
+          ${info('성별', m.gender)}
+          ${info('가입일', m.join_date)}
+          ${info('상태', m.status === 'active' ? '활성' : '비활성')}
+        </div>
+      </div>
+      ${m.note ? `<div style="font-size:13px;color:var(--muted);background:var(--surface-2);
+        border-radius:8px;padding:8px 12px;margin-bottom:12px">📝 ${m.note}</div>` : ''}
+
+      <div style="display:flex;align-items:center;justify-content:space-between;margin:14px 0 8px">
+        <b style="font-size:14px">💳 구매 내역 <span style="color:var(--muted);font-weight:500">${sales.length}건</span></b>
+        <b style="font-size:14px;color:var(--accent)">누적 ${totalPaid.toLocaleString()}원</b>
+      </div>
+      <div style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:10px">
+        <table class="tbl" style="margin:0">
+          <thead><tr><th>일자</th><th style="text-align:left">상품</th><th>분류</th><th>금액</th><th>결제</th></tr></thead>
+          <tbody>${salesRows}</tbody></table>
+      </div>`,
+      `<button class="btn" onclick="closeModal();modalNewSale(${id})"><i data-lucide="credit-card"></i> 결제 등록</button>
+       <button class="btn primary" onclick="editMember(${id})"><i data-lucide="edit"></i> 수정</button>`);
+    if (window.lucide) lucide.createIcons();
+  };
+
+  // ── 회원 수정 ───────────────────────────────────────────────
+  window.editMember = async function (id) {
+    const r = await api(`/api/members/${id}`);
+    if (!r || !r.ok) return;
+    const m = await r.json();
     createModal({
-      title: '회원 정보 — ' + name,
+      title: '회원 수정 — ' + m.name,
+      size: 'lg',
       fields: [
-        { id:'name',      label:'이름',     type:'text',   default: name },
-        { id:'phone',     label:'전화번호', type:'text',   default: phone },
-        { id:'email',     label:'이메일',   type:'text',   default: email, row:'em' },
-        { id:'join_date', label:'가입일',   type:'date',   default: joinDate, row:'em' },
+        { id:'name',      label:'이름',     type:'text', default: m.name, required:true, row:'nm' },
+        { id:'phone',     label:'전화번호', type:'text', default: m.phone, row:'nm' },
+        { id:'dong',      label:'동',       type:'text', default: m.dong, placeholder:'예: 101', row:'dh' },
+        { id:'ho',        label:'호',       type:'text', default: m.ho, placeholder:'예: 1203', row:'dh' },
+        { id:'email',     label:'이메일',   type:'text', default: m.email, row:'em' },
+        { id:'join_date', label:'가입일',   type:'date', default: m.join_date, row:'em' },
         { id:'status',    label:'상태',     type:'select',
-          options:[{value:'active',label:'활성'},{value:'inactive',label:'비활성'}], default: status },
-        { id:'note',      label:'메모',     type:'textarea', rows:2, default: note },
-        { id:'_id',       label:'',         type:'hidden',  value: String(id) },
+          options:[{value:'active',label:'활성'},{value:'inactive',label:'비활성'}], default: m.status },
+        { id:'note',      label:'메모',     type:'textarea', rows:2, default: m.note },
       ],
       submitLabel: '저장',
       onSubmit: async (data) => {
         const resp = await api(`/api/members/${id}`, {
           method: 'PATCH',
-          body: JSON.stringify({ name: data.name, phone: data.phone, email: data.email,
-            join_date: data.join_date, status: data.status, note: data.note })
+          body: JSON.stringify({ name:data.name, phone:data.phone, dong:data.dong, ho:data.ho,
+            email:data.email, join_date:data.join_date, status:data.status, note:data.note })
         });
         if (!resp?.ok) throw new Error('저장 실패');
         showToast('회원 정보가 수정되었습니다');
@@ -1608,8 +1702,6 @@
       const isStaff = user.role === 'staff';
       const addBtn  = isStaff
         ? `<button class="btn primary sm" onclick="modalNewProduct()"><i data-lucide="plus"></i> 상품 추가</button>` : '';
-      const payBtn  = isStaff
-        ? `<button class="btn sm" style="background:#16a34a;color:#fff" onclick="modalNewSale()"><i data-lucide="credit-card"></i> 결제 등록</button>` : '';
 
       const fmtWon = v => (v || 0).toLocaleString() + '원';
 
@@ -1690,8 +1782,8 @@
       container.innerHTML = `
         <div class="page">
           <div class="card-head">
-            <div><div class="section-title">상품 관리</div><div class="section-sub">${branch} · GX · 레슨 · 상품 / 결제 등록</div></div>
-            <div style="display:flex;gap:8px">${payBtn}${addBtn}</div>
+            <div><div class="section-title">상품 관리</div><div class="section-sub">${branch} · GX · 레슨 · 상품 (결제 등록은 회원 탭에서)</div></div>
+            <div style="display:flex;gap:8px">${addBtn}</div>
           </div>
           ${catSection('gx')}
           ${catSection('lesson')}
@@ -1800,7 +1892,7 @@
   }
 
   // ── 결제 등록 (CRM) ───────────────────────────────────────────
-  window.modalNewSale = async function () {
+  window.modalNewSale = async function (preMemberId) {
     const branch = user.branch || '';
     let products = [], members = [];
     try {
@@ -1815,6 +1907,12 @@
     const prodOpts = products.map(p =>
       `${PROD_CAT[p.category]?.label || ''} | ${p.name} (${(p.price||0).toLocaleString()}원)`);
     const membOpts = members.map(m => `${m.name} (${m.phone || '번호없음'})`);
+    // 회원 상세에서 호출 시 해당 회원 기본 선택
+    let preMemberLabel = '';
+    if (preMemberId) {
+      const idx = members.findIndex(m => m.id === preMemberId);
+      if (idx >= 0) preMemberLabel = membOpts[idx];
+    }
 
     createModal({
       title: '💳 결제 등록',
@@ -1822,6 +1920,7 @@
       fields: [
         { id:'member',  label:'회원', type: membOpts.length ? 'select' : 'text',
           options: membOpts.length ? ['직접 입력', ...membOpts] : undefined,
+          default: preMemberLabel,
           placeholder:'회원 이름', hint:'목록에 없으면 직접 입력을 선택하세요' },
         { id:'member_direct', label:'회원 이름 (직접 입력 시)', type:'text', placeholder:'비회원/직접 입력' },
         { id:'product', label:'상품', type: prodOpts.length ? 'select' : 'text',
@@ -1868,7 +1967,9 @@
           throw new Error(d?.detail || '저장 실패');
         }
         showToast('✅ 결제가 등록되었습니다');
-        renderClasses(document.getElementById('page-content'));
+        // 회원 화면이면 목록 갱신, 아니면 상품 화면 갱신
+        if (currentPage === 'members') loadMembers('');
+        else renderClasses(document.getElementById('page-content'));
       }
     });
 
@@ -1893,28 +1994,29 @@
       const resp       = await api(`/api/operations/instructors?branch=${encodeURIComponent(branch)}`);
       if (!resp) return;
       const instructors = await resp.json();
-      const addBtn = user.role === 'staff'
+      const isStaff = user.role === 'staff';
+      const addBtn = isStaff
         ? `<button class="btn primary sm" onclick="modalNewInstructor()"><i data-lucide="plus"></i> 강사 추가</button>` : '';
+      window._instCache = instructors;
       container.innerHTML = `
         <div class="page">
           <div class="card-head">
             <div><div class="section-title">강사 소개</div><div class="section-sub">라온스포츠 전문 트레이너</div></div>
             ${addBtn}
           </div>
-          <div class="grid-3">
+          <div class="inst-grid">
             ${instructors.map(i => `
-              <div class="instructor-card">
-                <div class="photo" style="${i.photo_path ? 'background-image:url('+i.photo_path+')' : 'background:var(--surface-2)'}">
-                  ${!i.photo_path ? `<div style="display:flex;align-items:center;justify-content:center;height:100%;font-size:48px;color:var(--muted)">${i.name.charAt(0)}</div>` : ''}
-                  <div class="name-overlay">
-                    <div class="name">${i.name}</div>
-                    <div style="font-size:12px;opacity:.8">${i.english || ''}</div>
-                  </div>
+              <div class="inst-card">
+                <div class="inst-avatar" style="${i.photo_path ? 'background-image:url('+i.photo_path+');background-size:cover;background-position:center' : ''}">
+                  ${!i.photo_path ? i.name.charAt(0) : ''}
                 </div>
-                <div class="body">
-                  <span class="badge outline">${i.role || '강사'}</span>
-                  <p style="margin:8px 0 4px;font-size:13px;color:var(--muted-2)">${(i.bio || '').slice(0, 100)}</p>
+                <div class="inst-info">
+                  <div class="inst-name">${i.name}${i.english ? ` <span style="font-size:11px;color:var(--muted);font-weight:500">${i.english}</span>` : ''}</div>
+                  <span class="badge outline" style="font-size:11px">${i.role || '강사'}</span>
+                  ${i.bio ? `<p class="inst-bio">${(i.bio || '').slice(0, 60)}</p>` : ''}
                 </div>
+                ${isStaff ? `<button class="inst-edit" onclick="modalEditInstructor(${i.id})" title="수정">
+                  <i data-lucide="edit-2" style="width:14px;height:14px"></i></button>` : ''}
               </div>`).join('') || '<div class="empty" style="grid-column:1/-1">등록된 강사가 없습니다</div>'}
           </div>
         </div>`;
@@ -1923,6 +2025,31 @@
       container.innerHTML = `<div class="page"><div class="empty">오류: ${err.message}</div></div>`;
     }
   }
+
+  window.modalEditInstructor = function (id) {
+    const i = (window._instCache || []).find(x => x.id === id);
+    if (!i) return;
+    createModal({
+      title: '강사 수정 — ' + i.name,
+      size: 'lg',
+      fields: [
+        { id:'name',    label:'이름',   type:'text', default: i.name, required:true, row:'nm' },
+        { id:'english', label:'영문명', type:'text', default: i.english, row:'nm' },
+        { id:'role',    label:'역할',   type:'text', default: i.role, placeholder:'예: GX강사 / 퍼스널트레이너', row:'rl' },
+        { id:'bio',     label:'소개',   type:'textarea', rows:3, default: i.bio },
+      ],
+      submitLabel: '저장',
+      onSubmit: async (data) => {
+        const resp = await api(`/api/operations/instructors/${id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ name:data.name, english:data.english, role:data.role, bio:data.bio })
+        });
+        if (!resp?.ok) throw new Error('수정 실패');
+        showToast('강사 정보가 수정되었습니다');
+        renderInstructors(document.getElementById('page-content'));
+      }
+    });
+  };
 
   // ── Navigation ────────────────────────────────────────────────
   window.navigateTo = function (page) {

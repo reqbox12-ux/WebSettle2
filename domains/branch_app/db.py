@@ -288,6 +288,12 @@ def init_branch_tables():
         created_at   TEXT DEFAULT (datetime('now','localtime'))
     );
     """)
+    # ── 마이그레이션: members 아파트 동/호 컬럼 ──
+    _mcols = {r[1] for r in conn.execute("PRAGMA table_info(members)")}
+    if "dong" not in _mcols:
+        conn.execute("ALTER TABLE members ADD COLUMN dong TEXT DEFAULT ''")
+    if "ho" not in _mcols:
+        conn.execute("ALTER TABLE members ADD COLUMN ho TEXT DEFAULT ''")
     conn.commit()
     conn.close()
 
@@ -516,21 +522,22 @@ def upsert_member(data: dict) -> int:
     if data.get("id"):
         conn.execute("""
             UPDATE members SET name=?, phone=?, email=?, birth_date=?, gender=?,
-                join_date=?, status=?, pin=?, note=?
+                join_date=?, status=?, pin=?, note=?, dong=?, ho=?
             WHERE id=?
         """, (data["name"], data.get("phone",""), data.get("email",""),
               data.get("birth_date",""), data.get("gender",""),
               data.get("join_date",""), data.get("status","active"),
-              pin, data.get("note",""), data["id"]))
+              pin, data.get("note",""), data.get("dong",""), data.get("ho",""),
+              data["id"]))
         mid = data["id"]
     else:
         cur = conn.execute("""
-            INSERT INTO members (branch, name, phone, email, birth_date, gender, join_date, status, pin, note)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO members (branch, name, phone, email, birth_date, gender, join_date, status, pin, note, dong, ho)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
         """, (data["branch"], data["name"], data.get("phone",""), data.get("email",""),
               data.get("birth_date",""), data.get("gender",""),
               data.get("join_date",""), data.get("status","active"),
-              pin, data.get("note","")))
+              pin, data.get("note",""), data.get("dong",""), data.get("ho","")))
         mid = cur.lastrowid
     conn.commit()
     conn.close()
@@ -750,6 +757,16 @@ def get_sales(branch: str, year: int = None, month: int = None, limit: int = 100
     q += " ORDER BY created_at DESC LIMIT ?"
     args.append(limit)
     res = _rows(conn.execute(q, args))
+    conn.close()
+    return res
+
+
+def get_sales_by_member(member_id: int, limit: int = 50) -> list[dict]:
+    """특정 회원의 결제(구매) 내역"""
+    conn = get_conn()
+    res  = _rows(conn.execute(
+        "SELECT * FROM sales WHERE member_id=? ORDER BY created_at DESC LIMIT ?",
+        (member_id, limit)))
     conn.close()
     return res
 
