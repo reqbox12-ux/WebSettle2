@@ -22,6 +22,7 @@
     .btn:disabled{opacity:.5}
     .msg{margin-top:16px;font-size:13px;line-height:1.6}
     .err{color:#E60028}.ok{color:#2E7D5B}
+    #payment-method,#agreement{margin-top:6px;text-align:left}
   </style>
 </head>
 <body>
@@ -39,7 +40,9 @@
       <div class="prod">{{ order.product_name }}</div>
       <div class="amt">{{ "{:,}".format(order.amount) }}원</div>
       <div class="br">라온스포츠 · {{ order.branch }}{% if order.member_name %} · {{ order.member_name }}님{% endif %}</div>
-      <button class="btn" id="payBtn">결제하기</button>
+      <div id="payment-method"></div>
+      <div id="agreement"></div>
+      <button class="btn" id="payBtn" disabled>결제하기</button>
       <div class="msg" id="msg"></div>
     {% endif %}
   </div>
@@ -78,30 +81,40 @@
     } else if (!CLIENT_KEY) {
       msgEl.className='msg err';
       msgEl.textContent = '토스 키가 설정되지 않았습니다. 관리자에게 문의하세요.';
-      btn.disabled = true;
     } else {
-      // ── v2 결제창 (payment) — 위젯 UI 설정 불필요, gck 키로 동작 ──
-      const tossPayments = TossPayments(CLIENT_KEY);
-      const payment = tossPayments.payment({ customerKey: TossPayments.ANONYMOUS });
-      const base = location.origin + location.pathname;
-      btn.addEventListener('click', async () => {
-        btn.disabled = true;
+      // ── v2 결제위젯 (widgets) — 토스 개발자센터 등록 UI(variantKey) 사용 ──
+      const VARIANT_KEY = 'widgetA';   // 토스 결제위젯 UI 이름
+      (async () => {
         try {
-          await payment.requestPayment({
-            method: 'CARD',
-            amount: { currency: 'KRW', value: ORDER.amount },
-            orderId: ORDER.orderId,
-            orderName: ORDER.orderName,
-            customerName: ORDER.customerName || '회원',
-            successUrl: base,
-            failUrl: base + '?code=FAIL',
-            card: { useEscrow: false, flowMode: 'DEFAULT', useCardPoint: false, useAppCardOnly: false },
+          const tossPayments = TossPayments(CLIENT_KEY);
+          const widgets = tossPayments.widgets({ customerKey: TossPayments.ANONYMOUS });
+          await widgets.setAmount({ currency: 'KRW', value: ORDER.amount });
+          await Promise.all([
+            widgets.renderPaymentMethods({ selector: '#payment-method', variantKey: VARIANT_KEY }),
+            widgets.renderAgreement({ selector: '#agreement', variantKey: 'AGREEMENT' }),
+          ]);
+          btn.disabled = false;
+          const base = location.origin + location.pathname;
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+              await widgets.requestPayment({
+                orderId: ORDER.orderId,
+                orderName: ORDER.orderName,
+                customerName: ORDER.customerName || '회원',
+                successUrl: base,
+                failUrl: base + '?code=FAIL',
+              });
+            } catch (e) {
+              btn.disabled = false;
+              if (e.code !== 'USER_CANCEL') { msgEl.className='msg err'; msgEl.textContent = '⚠️ ' + (e.message||'결제 요청 실패'); }
+            }
           });
         } catch (e) {
-          btn.disabled = false;
-          if (e.code !== 'USER_CANCEL') { msgEl.className='msg err'; msgEl.textContent = '⚠️ ' + (e.message||'결제 요청 실패'); }
+          msgEl.className='msg err';
+          msgEl.textContent = '⚠️ 결제 위젯 로드 실패: ' + (e.message||e);
         }
-      });
+      })();
     }
   </script>
   {% endif %}
