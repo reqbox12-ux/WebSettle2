@@ -1365,6 +1365,7 @@ class ProductBody(BaseModel):
     pass_type:       str = "count"   # 'count'|'period'
     pass_count:      int = 0
     pass_days:       int = 30
+    prorate:         int = 0         # GX 가변요금 토글
 
 
 @app.post("/api/products")
@@ -2115,7 +2116,7 @@ async def api_pay_orders(request: Request, branch: str = "", status: str = ""):
 # ═══════════════════════════════════════════════════════════════════════════════
 @app.get("/api/my/products")
 async def api_my_products(request: Request, category: str = ""):
-    """회원이 구매 가능한 상품 (자기 지점)."""
+    """회원이 구매 가능한 상품 (자기 지점). GX 가변요금이면 현재 청구가 동봉."""
     user = require_member(request)
     br = user.get("branch", "")
     conn = get_conn()
@@ -2126,6 +2127,13 @@ async def api_my_products(request: Request, category: str = ""):
     q += " ORDER BY category, name"
     rows = _rows(conn.execute(q, args))
     conn.close()
+    from domains.branch_app.pay_sms import gx_current_price
+    for p in rows:
+        if p.get("category") == "gx" and p.get("prorate"):
+            info = gx_current_price(p)
+            p["current_charge"] = info["charge"]
+            p["remaining_sessions"] = info["remaining"]
+            p["total_sessions"] = info["total"]
     return rows
 
 
@@ -2164,11 +2172,20 @@ async def api_my_buy(request: Request, body: SelfBuyBody):
         if hc["max"] and hc["enrolled"] >= hc["max"]:
             raise HTTPException(status_code=400, detail="정원이 마감되었습니다")
 
+    # GX 가변요금이면 남은 회차 기준 청구
     base = product.get("price", 0)
+    pname = product["name"]
+    if product.get("category") == "gx" and product.get("prorate"):
+        from domains.branch_app.pay_sms import gx_current_price
+        info = gx_current_price(product)
+        if info["remaining"] <= 0:
+            raise HTTPException(status_code=400, detail="이번 달 남은 수업이 없습니다")
+        base = info["charge"]
+        pname = f"{product['name']} ({info['remaining']}회분)"
     amount = charge_amount(base, "토스")   # 셀프구매는 토스(카드) → VAT 가산
     order = create_order(
         branch=br, member_id=mid, member_name=mname, member_phone=mphone,
-        product_id=product["id"], product_name=product["name"],
+        product_id=product["id"], product_name=pname,
         category=product.get("category", ""), base_amount=base, amount=amount,
         pay_method="토스", channel="self", created_by="")
     return {"applied": False, "token": order["token"],

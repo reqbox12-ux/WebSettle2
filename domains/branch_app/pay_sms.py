@@ -30,6 +30,62 @@ def _digits(s: str) -> str:
     return "".join(ch for ch in (s or "") if ch.isdigit())
 
 
+# ── GX 가변 요금 (일할 계산) ──────────────────────────────────
+_WEEKDAY_MAP = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
+
+
+def _parse_weekdays(days: str) -> set:
+    s = days or ""
+    if "매일" in s:
+        return set(range(7))
+    return {_WEEKDAY_MAP[ch] for ch in s if ch in _WEEKDAY_MAP}
+
+
+def _gx_session_dates(year: int, month: int, weekdays: set) -> list:
+    """해당 월의 수업 날짜 (요일 매칭, 공휴일 제외)."""
+    import calendar
+    from datetime import date
+    conn = get_conn()
+    hol = {r[0] for r in conn.execute("SELECT holiday_date FROM public_holidays WHERE year=?", (year,))}
+    conn.close()
+    out = []
+    for d in range(1, calendar.monthrange(year, month)[1] + 1):
+        dt = date(year, month, d)
+        ds = dt.isoformat()
+        if dt.weekday() in weekdays and ds not in hol:
+            out.append(ds)
+    return out
+
+
+def gx_current_price(product: dict, ref_dt=None) -> dict:
+    """GX 상품의 현재 청구가. prorate=1이면 남은 회차만큼 일할 계산.
+    오늘이 수업일이고 수업 시작 전이면 오늘 회차 포함."""
+    from datetime import datetime
+    full = int(product.get("price", 0) or 0)
+    if not product.get("prorate"):
+        return {"prorate": False, "full": full, "charge": full,
+                "total": 0, "remaining": 0, "per_session": 0}
+    now = ref_dt or datetime.now()
+    weekdays = _parse_weekdays(product.get("days", ""))
+    dates = _gx_session_dates(now.year, now.month, weekdays)
+    # 가변요금은 '이번 달 실제 수업일 수'를 기준 (공휴일 제외) — 청구가 정가 초과 방지
+    total = len(dates) or 1
+    per = round(full / total) if total else full
+    today = now.date().isoformat()
+    start_t = (product.get("start_time") or "00:00")[:5]
+    cur_hm = now.strftime("%H:%M")
+    remaining = 0
+    for ds in dates:
+        if ds > today:
+            remaining += 1
+        elif ds == today and cur_hm < start_t:   # 오늘 수업 시작 전이면 포함
+            remaining += 1
+    charge = round(remaining * per) if remaining else 0
+    return {"prorate": True, "full": full, "charge": charge,
+            "total": total, "remaining": remaining, "per_session": per,
+            "session_dates": dates}
+
+
 # ── 문자 템플릿 ───────────────────────────────────────────────
 def list_templates() -> list[dict]:
     conn = get_conn()

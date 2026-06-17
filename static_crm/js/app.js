@@ -1935,13 +1935,16 @@
           ]},
           { id:'pass_count', label:'횟수 (횟수권)', type:'number', default:'10', min:1, row:'ps' },
           { id:'pass_days',  label:'유효일수 (기간권)', type:'number', default:'30', min:1, row:'ps' },
+          { id:'prorate', label:'가변 요금 (중도등록 일할계산)', type:'radio', options:[
+            { value:'0', label:'고정 금액' }, { value:'1', label:'가변(남은 회차만 청구)' },
+          ], hint:'가변: 이번 달 남은 수업 회차 × 회당 단가로 자동 계산 (공휴일 제외)' },
         ],
         submitLabel: 'GX 등록',
         onSubmit: async (data) => submitProduct({ ...data, category:'gx',
           price: parseInt(data.price)||0, capacity: parseInt(data.capacity)||20,
           min_headcount: parseInt(data.min_headcount)||0, max_headcount: parseInt(data.max_headcount)||0,
           pass_type: data.pass_type||'count', pass_count: parseInt(data.pass_count)||0,
-          pass_days: parseInt(data.pass_days)||30 }),
+          pass_days: parseInt(data.pass_days)||30, prorate: parseInt(data.prorate)||0 }),
       });
     } else if (category === 'lesson') {
       createModal({
@@ -2423,9 +2426,14 @@
     if (!el) return;
     el.innerHTML = `<div class="grid-3">
       ${items.map(p => {
-        const vat = Math.round((p.price||0)*1.1);
+        // 가변요금 GX면 현재 청구가(current_charge) 기준, 아니면 정가
+        const base = (p.category==='gx' && p.prorate && p.current_charge!=null) ? p.current_charge : (p.price||0);
+        const vat = Math.round(base*1.1);
         let detail = '';
-        if (p.category==='gx') detail = `<div style="font-size:12px;color:var(--muted)">${p.days||'매일'} ${p.start_time||''}~${p.end_time||''}<br>강사 ${p.instructor_name||'미정'} · ${p.pass_type==='period'?(p.pass_days+'일권'):(p.pass_count+'회권')}</div>`;
+        if (p.category==='gx') {
+          detail = `<div style="font-size:12px;color:var(--muted)">${p.days||'매일'} ${p.start_time||''}~${p.end_time||''}<br>강사 ${p.instructor_name||'미정'} · ${p.pass_type==='period'?(p.pass_days+'일권'):(p.pass_count+'회권')}</div>`;
+          if (p.prorate && p.remaining_sessions!=null) detail += `<div style="font-size:11.5px;color:var(--accent);margin-top:4px">⏱ 이번 달 남은 ${p.remaining_sessions}/${p.total_sessions}회 · 일할 적용</div>`;
+        }
         else if (p.category==='lesson') detail = `<div style="font-size:12px;color:var(--muted)">${p.lesson_type||''} · ${p.sessions||0}회</div>`;
         return `<div class="card" style="padding:18px 20px">
           <div style="font-size:15px;font-weight:800;margin-bottom:6px">${p.name}</div>
