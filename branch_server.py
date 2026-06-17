@@ -2285,6 +2285,52 @@ async def api_sms_reregister(request: Request, body: ReRegBody):
     return res
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  공휴일 관리 (GX 가변요금 계산용) — 매니저/관리자
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.get("/api/holidays")
+async def api_holidays(request: Request, year: int = 0):
+    require_staff(request)
+    conn = get_conn()
+    if year:
+        cur = conn.execute("SELECT id, holiday_date, name, year FROM public_holidays WHERE year=? ORDER BY holiday_date", (year,))
+    else:
+        cur = conn.execute("SELECT id, holiday_date, name, year FROM public_holidays ORDER BY holiday_date DESC")
+    rows = _rows(cur)
+    conn.close()
+    return rows
+
+
+class HolidayBody(BaseModel):
+    holiday_date: str   # YYYY-MM-DD
+    name:         str
+
+
+@app.post("/api/holidays")
+async def api_holiday_add(request: Request, body: HolidayBody):
+    require_role(request, "manager")
+    import re as _re
+    if not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", body.holiday_date.strip()):
+        raise HTTPException(status_code=400, detail="날짜는 YYYY-MM-DD 형식이어야 합니다")
+    if not body.name.strip():
+        raise HTTPException(status_code=400, detail="공휴일 이름을 입력하세요")
+    yr = int(body.holiday_date[:4])
+    conn = get_conn()
+    conn.execute("INSERT OR REPLACE INTO public_holidays (holiday_date, name, year) VALUES (?,?,?)",
+                 (body.holiday_date.strip(), body.name.strip(), yr))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/holidays/{hid}")
+async def api_holiday_del(request: Request, hid: int):
+    require_role(request, "manager")
+    conn = get_conn()
+    conn.execute("DELETE FROM public_holidays WHERE id=?", (hid,))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

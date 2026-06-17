@@ -1867,7 +1867,10 @@
         <div class="page">
           <div class="card-head">
             <div><div class="section-title">상품 관리</div><div class="section-sub">${branch} · GX · 레슨 · 상품 (결제 등록은 회원 탭에서)</div></div>
-            <div style="display:flex;gap:8px">${addBtn}</div>
+            <div style="display:flex;gap:8px">
+              <button class="btn sm" onclick="openHolidays()"><i data-lucide="calendar-off"></i> 공휴일 관리</button>
+              ${addBtn}
+            </div>
           </div>
           ${catSection('gx')}
           ${catSection('lesson')}
@@ -1885,6 +1888,52 @@
     const resp = await api(`/api/products/${pid}`, { method: 'DELETE' });
     if (resp?.ok) { showToast('삭제되었습니다'); renderClasses(document.getElementById('page-content')); }
     else showToast('삭제 실패', 'err');
+  };
+
+  // ── 공휴일 관리 (GX 가변요금 계산용) ──────────────────────────
+  let _holYear = new Date().getFullYear();
+  window.openHolidays = async function () {
+    const r = await api(`/api/holidays?year=${_holYear}`);
+    const list = r && r.ok ? await r.json() : [];
+    const yrs = [];
+    for (let y = new Date().getFullYear()+1; y >= new Date().getFullYear()-1; y--) yrs.push(y);
+    const rows = list.map(h => `
+      <div style="display:flex;align-items:center;gap:10px;padding:7px 4px;border-bottom:1px solid var(--border);font-size:13px">
+        <span style="font-weight:700;width:104px">${h.holiday_date}</span>
+        <span style="flex:1">${h.name}</span>
+        <button class="btn sm" onclick="delHoliday(${h.id})">🗑️</button>
+      </div>`).join('') || '<div style="font-size:13px;color:var(--muted);padding:10px 0">등록된 공휴일이 없습니다</div>';
+    openHtmlModal('📅 공휴일 관리 — GX 가변요금 계산에 반영', `
+      <div style="font-size:12.5px;color:var(--muted);margin-bottom:12px">
+        여기 등록된 날짜는 GX 수업일에서 제외되어 가변요금이 계산됩니다.
+        (임시공휴일·선거일·지점 자체 휴무일 등)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
+        <select id="hol-year" class="inp" onchange="holYear(this.value)" style="width:100px">
+          ${yrs.map(y=>`<option value="${y}" ${y===_holYear?'selected':''}>${y}년</option>`).join('')}
+        </select>
+        <input id="hol-date" type="date" class="inp" style="width:160px">
+        <input id="hol-name" class="inp" placeholder="공휴일 이름" style="flex:1;min-width:140px">
+        <button class="btn primary sm" onclick="addHoliday()">추가</button>
+      </div>
+      <div style="max-height:340px;overflow-y:auto;border:1px solid var(--border);border-radius:10px;padding:6px 10px">
+        ${rows}
+      </div>`);
+    if (window.lucide) lucide.createIcons();
+  };
+  window.holYear = function (y) { _holYear = parseInt(y); openHolidays(); };
+  window.addHoliday = async function () {
+    const date = document.getElementById('hol-date').value;
+    const name = document.getElementById('hol-name').value.trim();
+    if (!date || !name) { showToast('날짜와 이름을 입력하세요','err'); return; }
+    const r = await api('/api/holidays', { method:'POST', body: JSON.stringify({ holiday_date: date, name }) });
+    const d = await r?.json().catch(()=>({}));
+    if (r?.ok) { showToast('✅ 공휴일 추가'); _holYear = parseInt(date.slice(0,4)); openHolidays(); }
+    else showToast(d.detail||'추가 실패','err');
+  };
+  window.delHoliday = async function (id) {
+    if (!confirm('이 공휴일을 삭제할까요?')) return;
+    const r = await api(`/api/holidays/${id}`, { method:'DELETE' });
+    if (r?.ok) { showToast('삭제 완료'); openHolidays(); }
   };
 
   // ── 상품 추가: 1단계 카테고리 선택 → 2단계 상세 입력 ─────────
