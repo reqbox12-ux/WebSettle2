@@ -11,8 +11,8 @@
     body{background:#FAF7F5;min-height:100vh;display:flex;align-items:flex-start;justify-content:center;padding:24px 12px}
     .card{background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.08);
       width:min(460px,96vw);padding:30px 24px}
-    .logo{font-size:22px;font-weight:900;color:#E60028;letter-spacing:-.02em;text-align:center}
-    .logo span{color:#1F1B1B}
+    .logo{text-align:center;margin-bottom:2px}
+    .logo img{height:34px;object-fit:contain}
     .sub{font-size:12.5px;color:#9A918C;margin-bottom:20px;text-align:center}
     .prod{font-size:16px;font-weight:700;color:#1F1B1B;text-align:center;margin-bottom:4px}
     .amt{font-size:30px;font-weight:900;color:#1F1B1B;letter-spacing:-.03em;text-align:center;margin-bottom:4px}
@@ -27,7 +27,7 @@
 </head>
 <body>
   <div class="card">
-    <div class="logo">LAON<span>SPORTS</span></div>
+    <div class="logo"><img src="/static/img/logo.png" alt="LAONSPORTS"></div>
     <div class="sub">안전한 결제 (토스페이먼츠)</div>
 
     {% if error %}
@@ -91,8 +91,8 @@
           const widgets = tossPayments.widgets({ customerKey: TossPayments.ANONYMOUS });
           await widgets.setAmount({ currency: 'KRW', value: ORDER.amount });
           await Promise.all([
-            widgets.renderPaymentMethods({ selector: '#payment-method', variantKey: 'DEFAULT' }),
-            widgets.renderAgreement({ selector: '#agreement', variantKey: 'AGREEMENT' }),
+            widgets.renderPaymentMethods({ selector: '#payment-method' }),
+            widgets.renderAgreement({ selector: '#agreement' }),
           ]);
           btn.disabled = false;
           const base = location.origin + location.pathname;
