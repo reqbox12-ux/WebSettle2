@@ -1144,8 +1144,10 @@
           <label>전화번호<input id="ef-phone" value="${e.phone || ''}" placeholder="01012345678"></label>
           <label>이메일<input id="ef-email" value="${e.email || ''}"></label>
           <label>입사일<input id="ef-join" value="${e.join_date || ''}" placeholder="2026-01-01"></label>
-          <label>주민번호 <span style="font-weight:400;color:var(--ink3)">(멀티지점 묶음키)</span>
+          <label>주민번호 <span style="font-weight:400;color:var(--ink3)">(암호화·멀티지점 묶음키)</span>
             <input id="ef-idnum" value="${e.id_number || ''}" placeholder="여러 지점 근무 시 동일 입력"></label>
+          <label>계좌번호 <span style="font-weight:400;color:var(--ink3)">(암호화)</span>
+            <input id="ef-acct" value="${e.account_no || ''}" placeholder="급여 입금 계좌"></label>
           <label>정산요율 % <span style="font-weight:400;color:var(--ink3)">(트레이너/프로 %상품)</span>
             <input id="ef-comm" type="number" step="0.1" value="${e.commission_percent || 0}"></label>
           <label>고용형태 <span style="font-weight:400;color:var(--ink3)">(트레이너/프로)</span>
@@ -1178,7 +1180,7 @@
     const body = { id, name: v('name'), branch: v('branch'), emp_type: v('type'),
       base_salary: parseInt(v('salary')) || 0, dependents: parseInt(v('dep')) || 1,
       phone: v('phone'), email: v('email'), join_date: v('join'),
-      id_number: v('idnum'), commission_percent: parseFloat(v('comm')) || 0,
+      id_number: v('idnum'), account_no: v('acct'), commission_percent: parseFloat(v('comm')) || 0,
       work_type: document.getElementById('ef-worktype').value,
       roles };
     if (!body.name) { showToast('이름을 입력하세요', 'err'); return; }

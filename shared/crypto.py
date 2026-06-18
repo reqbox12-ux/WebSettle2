@@ -74,6 +74,18 @@ def is_encrypted(v) -> bool:
     return isinstance(v, str) and v.startswith(_PREFIX)
 
 
+def dec_row(d):
+    """dict의 모든 'enc1:' 값 자동 복호화 (평문은 그대로). 키 목록 불필요."""
+    if not isinstance(d, dict):
+        return d
+    return {k: (decrypt(v) if (isinstance(v, str) and v.startswith(_PREFIX)) else v)
+            for k, v in d.items()}
+
+
+def dec_rows(rows):
+    return [dec_row(r) for r in rows]
+
+
 def blind_index(value: str) -> str:
     if not value:
         return ""

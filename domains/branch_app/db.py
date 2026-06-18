@@ -288,25 +288,48 @@ def init_branch_tables():
         created_at   TEXT DEFAULT (datetime('now','localtime'))
     );
     """)
-    # ── 마이그레이션: members 아파트 동/호 컬럼 ──
+    # ── 마이그레이션: members 아파트 동/호 + 검색/로그인용 해시 컬럼 ──
     _mcols = {r[1] for r in conn.execute("PRAGMA table_info(members)")}
     if "dong" not in _mcols:
         conn.execute("ALTER TABLE members ADD COLUMN dong TEXT DEFAULT ''")
     if "ho" not in _mcols:
         conn.execute("ALTER TABLE members ADD COLUMN ho TEXT DEFAULT ''")
+    if "phone_hash" not in _mcols:
+        conn.execute("ALTER TABLE members ADD COLUMN phone_hash TEXT DEFAULT ''")
+    if "name_hash" not in _mcols:
+        conn.execute("ALTER TABLE members ADD COLUMN name_hash TEXT DEFAULT ''")
+    conn.commit()
+
+    # ── 개인정보 암호화 마이그레이션 (회원: 이름·전화·동·호) ──
+    from shared.crypto import encrypt as _enc, is_encrypted as _isenc, blind_phone as _bph, blind_index as _bidx
+    for row in conn.execute("SELECT id, name, phone, dong, ho FROM members").fetchall():
+        mid, nm, ph, dg, h = row
+        sets, args = [], []
+        if nm and not _isenc(nm): sets.append("name=?");  args.append(_enc(nm))
+        if ph and not _isenc(ph): sets.append("phone=?"); args.append(_enc(ph))
+        if dg and not _isenc(dg): sets.append("dong=?");  args.append(_enc(dg))
+        if h  and not _isenc(h):  sets.append("ho=?");    args.append(_enc(h))
+        # 해시는 평문 기준으로 (이미 암호문이면 복호 불가하므로 평문일 때만 채움)
+        if ph and not _isenc(ph): sets.append("phone_hash=?"); args.append(_bph(ph))
+        if nm and not _isenc(nm): sets.append("name_hash=?");  args.append(_bidx(nm))
+        if sets:
+            conn.execute(f"UPDATE members SET {','.join(sets)} WHERE id=?", (*args, mid))
     conn.commit()
     conn.close()
 
 
+from shared.crypto import dec_row as _dec_row
+
+
 def _rows(cur) -> list[dict]:
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    return [_dec_row(dict(zip(cols, r))) for r in cur.fetchall()]
 
 
 def _one(cur) -> dict | None:
     cols = [d[0] for d in cur.description]
     row  = cur.fetchone()
-    return dict(zip(cols, row)) if row else None
+    return _dec_row(dict(zip(cols, row))) if row else None
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -498,12 +521,13 @@ def get_members(branch: str, status: str = None, search: str = "") -> list[dict]
     if status:
         q += " AND status=?"
         args.append(status)
-    if search:
-        q += " AND (name LIKE ? OR phone LIKE ?)"
-        args += [f"%{search}%", f"%{search}%"]
-    q += " ORDER BY name"
-    res = _rows(conn.execute(q, args))
+    res = _rows(conn.execute(q, args))   # 복호화된 dict
     conn.close()
+    # 이름·전화 암호화 컬럼이라 LIKE 불가 → 복호화 후 파이썬 필터
+    if search:
+        s = search.strip()
+        res = [m for m in res if s in (m.get("name") or "") or s in (m.get("phone") or "")]
+    res.sort(key=lambda m: m.get("name") or "")
     return res
 
 
@@ -515,29 +539,38 @@ def get_member(member_id: int) -> dict | None:
 
 
 def upsert_member(data: dict) -> int:
+    from shared.crypto import encrypt as _enc, blind_phone as _bph, blind_index as _bidx
     conn = get_conn()
-    # PIN 자동 설정 (전화번호 뒷4자리)
+    # PIN 자동 설정 (전화번호 뒷4자리) — 평문 기준
     phone = data.get("phone","").replace("-","").replace(" ","")
     pin   = data.get("pin") or (phone[-4:] if len(phone) >= 4 else "")
+    name  = data.get("name","")
+    # 검색/로그인용 해시(평문 기준) + 저장은 암호화
+    ph_hash = _bph(phone) if phone else ""
+    nm_hash = _bidx(name) if name else ""
+    enc_name  = _enc(name)
+    enc_phone = _enc(data.get("phone",""))
+    enc_dong  = _enc(data.get("dong",""))
+    enc_ho    = _enc(data.get("ho",""))
     if data.get("id"):
         conn.execute("""
             UPDATE members SET name=?, phone=?, email=?, birth_date=?, gender=?,
-                join_date=?, status=?, pin=?, note=?, dong=?, ho=?
+                join_date=?, status=?, pin=?, note=?, dong=?, ho=?, phone_hash=?, name_hash=?
             WHERE id=?
-        """, (data["name"], data.get("phone",""), data.get("email",""),
+        """, (enc_name, enc_phone, data.get("email",""),
               data.get("birth_date",""), data.get("gender",""),
               data.get("join_date",""), data.get("status","active"),
-              pin, data.get("note",""), data.get("dong",""), data.get("ho",""),
+              pin, data.get("note",""), enc_dong, enc_ho, ph_hash, nm_hash,
               data["id"]))
         mid = data["id"]
     else:
         cur = conn.execute("""
-            INSERT INTO members (branch, name, phone, email, birth_date, gender, join_date, status, pin, note, dong, ho)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
-        """, (data["branch"], data["name"], data.get("phone",""), data.get("email",""),
+            INSERT INTO members (branch, name, phone, email, birth_date, gender, join_date, status, pin, note, dong, ho, phone_hash, name_hash)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+        """, (data["branch"], enc_name, enc_phone, data.get("email",""),
               data.get("birth_date",""), data.get("gender",""),
               data.get("join_date",""), data.get("status","active"),
-              pin, data.get("note",""), data.get("dong",""), data.get("ho","")))
+              pin, data.get("note",""), enc_dong, enc_ho, ph_hash, nm_hash))
         mid = cur.lastrowid
     conn.commit()
     conn.close()

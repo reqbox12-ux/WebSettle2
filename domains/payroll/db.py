@@ -72,6 +72,10 @@ def _migrate_roles_and_person(conn):
         conn.execute("ALTER TABLE employees ADD COLUMN person_uid TEXT DEFAULT ''")
     if "commission_percent" not in ecols:
         conn.execute("ALTER TABLE employees ADD COLUMN commission_percent REAL DEFAULT 0")
+    if "name_hash" not in ecols:
+        conn.execute("ALTER TABLE employees ADD COLUMN name_hash TEXT DEFAULT ''")
+    if "account_no" not in ecols:
+        conn.execute("ALTER TABLE employees ADD COLUMN account_no TEXT DEFAULT ''")
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS employee_roles (
@@ -89,20 +93,26 @@ def _migrate_roles_and_person(conn):
 
     conn.commit()
 
-    # 주민번호 암호화 마이그레이션 + person_uid = 주민번호 blind index 재계산
+    # 개인정보 암호화 마이그레이션 (직원: 이름·주민번호·전화·계좌) + person_uid/name_hash
     from shared.crypto import encrypt as _enc, blind_index as _bidx, is_encrypted as _isenc
-    rows = conn.execute("SELECT id, id_number, person_uid FROM employees").fetchall()
-    for eid, idnum, puid in rows:
-        plain = (idnum or "").strip()
-        # 평문 주민번호면 암호화
-        if plain and not _isenc(plain):
-            conn.execute("UPDATE employees SET id_number=? WHERE id=?", (_enc(plain), eid))
-        # person_uid 보정: 평문주민번호 있으면 blind index로(같은 사람 묶음 유지), 없으면 EMP{id}
-        new_puid = _bidx(plain) if (plain and not _isenc(plain)) else puid
+    rows = conn.execute(
+        "SELECT id, name, id_number, phone, account_no, person_uid FROM employees").fetchall()
+    for eid, nm, idnum, ph, acct, puid in rows:
+        plain_id = (idnum or "").strip()
+        sets, args = [], []
+        if nm   and not _isenc(nm):   sets.append("name=?");       args.append(_enc(nm))
+        if nm   and not _isenc(nm):   sets.append("name_hash=?");  args.append(_bidx(nm))
+        if plain_id and not _isenc(plain_id): sets.append("id_number=?"); args.append(_enc(plain_id))
+        if ph   and not _isenc(ph):   sets.append("phone=?");      args.append(_enc(ph))
+        if acct and not _isenc(acct): sets.append("account_no=?"); args.append(_enc(acct))
+        # person_uid: 평문 주민번호 있으면 blind index, 없으면 EMP{id}
+        new_puid = _bidx(plain_id) if (plain_id and not _isenc(plain_id)) else puid
         if not new_puid:
             new_puid = f"EMP{eid}"
         if new_puid != puid:
-            conn.execute("UPDATE employees SET person_uid=? WHERE id=?", (new_puid, eid))
+            sets.append("person_uid=?"); args.append(new_puid)
+        if sets:
+            conn.execute(f"UPDATE employees SET {','.join(sets)} WHERE id=?", (*args, eid))
     conn.commit()
 
 
@@ -382,35 +392,36 @@ def init_payroll_tables():
 
 # ── 직원 마스터 쿼리 ─────────────────────────────────────────
 def get_all_employees(active_only: bool = True) -> list[dict]:
-    from shared.crypto import decrypt as _dec
+    from shared.crypto import dec_row as _dec_row
     conn = get_conn()
     q = "SELECT * FROM employees"
     if active_only:
         q += " WHERE is_active=1"
-    q += " ORDER BY branch, emp_type, name"
+    q += " ORDER BY branch, emp_type"
     cur  = conn.execute(q)
     cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
     conn.close()
-    out = [dict(zip(cols, r)) for r in rows]
-    for e in out:                       # 민감컬럼 복호화
-        if "id_number" in e:
-            e["id_number"] = _dec(e["id_number"])
+    out = [_dec_row(dict(zip(cols, r))) for r in rows]   # 이름·주민번호·전화·계좌 복호화
+    out.sort(key=lambda e: (e.get("branch") or "", e.get("name") or ""))
     return out
 
 
 def get_employees_by_branch(branch: str, active_only: bool = True) -> list[dict]:
+    from shared.crypto import dec_row as _dec_row
     conn = get_conn()
     q    = "SELECT * FROM employees WHERE branch=?"
     params: list = [branch]
     if active_only:
         q += " AND is_active=1"
-    q += " ORDER BY emp_type, name"
+    q += " ORDER BY emp_type"
     cur  = conn.execute(q, params)
     cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
     conn.close()
-    return [dict(zip(cols, r)) for r in rows]
+    out = [_dec_row(dict(zip(cols, r))) for r in rows]
+    out.sort(key=lambda e: (e.get("emp_type") or "", e.get("name") or ""))
+    return out
 
 
 # ── CRM 직무(Role) / 멀티지점 ────────────────────────────────
@@ -486,11 +497,13 @@ def get_branch_staff_by_roles(branch: str, roles: list[str]) -> list[dict]:
         ORDER BY e.name
     """, (branch, *roles)).fetchall()
     conn.close()
-    return [{"employee_id": r[0], "name": r[1], "commission_percent": r[2] or 0} for r in rows]
+    from shared.crypto import decrypt as _dec
+    return [{"employee_id": r[0], "name": _dec(r[1]), "commission_percent": r[2] or 0} for r in rows]
 
 
 def get_employee_brief(employee_id: int) -> dict | None:
     """선택된 지점(employee 행) 로그인 컨텍스트 구성용."""
+    from shared.crypto import decrypt as _dec
     conn = get_conn()
     row = conn.execute(
         "SELECT id, name, branch, person_uid, commission_percent FROM employees WHERE id=? AND is_active=1",
@@ -501,7 +514,7 @@ def get_employee_brief(employee_id: int) -> dict | None:
         return None
     roles = get_employee_roles(employee_id)
     return {
-        "employee_id": row[0], "name": row[1], "branch": row[2],
+        "employee_id": row[0], "name": _dec(row[1]), "branch": row[2],
         "person_uid": row[3], "commission_percent": row[4] or 0, "roles": roles,
     }
 
@@ -517,17 +530,21 @@ def upsert_employee(data: dict) -> int:
     name   = data["name"]
     branch = data["branch"]
 
-    # 주민번호 암호화 저장 (person_uid 계산용 평문은 별도 보관)
+    # 개인정보 암호화 저장 (이름·주민번호·전화·계좌). person_uid/중복확인용 평문은 별도 해시.
     from shared.crypto import encrypt as _enc, blind_index as _bidx
     _idnum_plain = (data.get("id_number", "") or "").strip()
     _idnum_stored = _enc(_idnum_plain) if _idnum_plain else ""
+    _name_hash = _bidx(name) if name else ""
+    _enc_name  = _enc(name)
+    _enc_phone = _enc(data.get("phone", ""))
+    _enc_acct  = _enc(data.get("account_no", ""))
 
     params_vals = (
-        name, branch, data["emp_type"], data.get("dependents", 1),
+        _enc_name, branch, data["emp_type"], data.get("dependents", 1),
         data.get("base_salary", 0), data.get("meal_allowance", 0), data.get("transport", 0),
         data.get("email", ""), _idnum_stored, data.get("join_date", ""),
         data.get("is_active", 1), data.get("note", ""),
-        data.get("phone", ""), data.get("work_start", "09:00"),
+        _enc_phone, data.get("work_start", "09:00"),
         data.get("work_end", "18:00"), data.get("hourly_rate", 0),
     )
 
@@ -545,8 +562,8 @@ def upsert_employee(data: dict) -> int:
         # 이름 + 지점 + 유형 3가지가 모두 같을 때만 기존 행 업데이트
         # → 같은 사람이 4대보험(기본급) + 사업소득(인센티브)로 중복 등록 가능
         existing = conn.execute(
-            "SELECT id FROM employees WHERE name=? AND branch=? AND emp_type=? ORDER BY id LIMIT 1",
-            (name, branch, data["emp_type"]),
+            "SELECT id FROM employees WHERE name_hash=? AND branch=? AND emp_type=? ORDER BY id LIMIT 1",
+            (_name_hash, branch, data["emp_type"]),
         ).fetchone()
 
         if existing:
@@ -568,6 +585,10 @@ def upsert_employee(data: dict) -> int:
                 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
             """, params_vals)
             emp_id = cur.lastrowid
+
+    # 이름 검색/중복확인 해시 + 계좌번호(암호화)
+    conn.execute("UPDATE employees SET name_hash=?, account_no=? WHERE id=?",
+                 (_name_hash, _enc_acct, emp_id))
 
     # commission_percent (선택)
     if "commission_percent" in data and data.get("commission_percent") is not None:
@@ -614,19 +635,20 @@ def deduplicate_employees() -> dict:
     # (name, branch, emp_type) 3개 모두 동일한 그룹만 중복으로 처리
     # → 같은 이름+지점이라도 유형(4대보험/사업소득)이 다르면 중복 아님
     dup_rows = conn.execute("""
-        SELECT name, branch, emp_type, COUNT(*) as cnt, MIN(id) as keep_id
+        SELECT name_hash, branch, emp_type, COUNT(*) as cnt, MIN(id) as keep_id
         FROM employees
-        GROUP BY name, branch, emp_type
+        WHERE name_hash != ''
+        GROUP BY name_hash, branch, emp_type
         HAVING cnt > 1
     """).fetchall()
 
-    for name, branch, emp_type, cnt, keep_id in dup_rows:
+    for name_hash, branch, emp_type, cnt, keep_id in dup_rows:
         groups += 1
         # 대표 ID(keep_id) 제외한 나머지 ID 목록
         dup_ids = [
             r[0] for r in conn.execute(
-                "SELECT id FROM employees WHERE name=? AND branch=? AND emp_type=? AND id!=? ORDER BY id",
-                (name, branch, emp_type, keep_id),
+                "SELECT id FROM employees WHERE name_hash=? AND branch=? AND emp_type=? AND id!=? ORDER BY id",
+                (name_hash, branch, emp_type, keep_id),
             ).fetchall()
         ]
         for dup_id in dup_ids:
@@ -961,14 +983,15 @@ def _is_legacy_hash(stored: str) -> bool:
 
 
 def create_employee_account(employee_id: int, username: str, default_pw: str) -> tuple[bool, str]:
-    """직원 계정 생성/갱신. username=이메일, default_pw=전화번호뒷4자리"""
+    """직원 계정 생성/갱신. username=전화번호(→blind index 저장), default_pw=전화 뒷4자리"""
     try:
+        from shared.crypto import blind_phone as _bph
         conn = get_conn()
         conn.execute("""
             INSERT OR REPLACE INTO employee_accounts
             (employee_id, username, password_hash, must_change_pw, is_active)
             VALUES (?,?,?,1,1)
-        """, (employee_id, username.strip(), _hash_pw(default_pw)))
+        """, (employee_id, _bph(username), _hash_pw(default_pw)))
         conn.commit()
         conn.close()
         return True, "계정 생성 완료"
@@ -988,22 +1011,24 @@ def get_employee_account(employee_id: int) -> dict | None:
 
 
 def get_all_employee_accounts() -> list[dict]:
+    from shared.crypto import dec_row as _dec_row
     conn = get_conn()
     cur  = conn.execute("""
         SELECT ea.*, e.name, e.branch, e.email, e.phone
         FROM employee_accounts ea
         JOIN employees e ON ea.employee_id = e.id
-        ORDER BY e.branch, e.name
+        ORDER BY e.branch
     """)
     cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
     conn.close()
-    return [dict(zip(cols, r)) for r in rows]
+    return [_dec_row(dict(zip(cols, r))) for r in rows]
 
 
 def verify_employee_login(username: str, password: str) -> dict | None:
     """로그인 검증. 성공 시 직원 정보 반환, 실패 시 None.
     bcrypt/레거시 SHA-256 모두 검증하고, 레거시면 로그인 성공 시 bcrypt로 업그레이드."""
+    from shared.crypto import blind_phone as _bph, decrypt as _dec
     conn = get_conn()
     try:
         row = conn.execute("""
@@ -1013,7 +1038,7 @@ def verify_employee_login(username: str, password: str) -> dict | None:
             FROM employee_accounts ea
             JOIN employees e ON ea.employee_id = e.id
             WHERE ea.username=? AND ea.is_active=1 AND e.is_active=1
-        """, (username.strip(),)).fetchone()
+        """, (_bph(username),)).fetchone()
         if not row or not _verify_pw(password, row[3]):
             return None
         # 레거시 해시면 bcrypt로 업그레이드
@@ -1026,8 +1051,8 @@ def verify_employee_login(username: str, password: str) -> dict | None:
         conn.commit()
         return {
             "employee_id": row[0], "must_change_pw": bool(row[1]),
-            "name": row[4], "branch": row[5], "emp_type": row[6],
-            "email": row[7] or "", "phone": row[8] or "",
+            "name": _dec(row[4]), "branch": row[5], "emp_type": row[6],
+            "email": row[7] or "", "phone": _dec(row[8]) or "",
             "work_start": row[9] or "09:00", "work_end": row[10] or "18:00",
             "hourly_rate": row[11] or 0, "username": row[12],
         }

@@ -20,10 +20,13 @@ from domains.branch_app.crm_ext import (
 )
 
 
+from shared.crypto import dec_row as _dec_row
+
+
 def _one(cur):
     cols = [d[0] for d in cur.description]
     row = cur.fetchone()
-    return dict(zip(cols, row)) if row else None
+    return _dec_row(dict(zip(cols, row))) if row else None
 
 
 def _digits(s: str) -> str:
@@ -702,7 +705,7 @@ def gx_class_board(branch: str, ym: str = "") -> list[dict]:
 
 def _rows_local(cur):
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    return [_dec_row(dict(zip(cols, r))) for r in cur.fetchall()]
 
 
 def gx_check_and_open(base_url: str, gx_product_id: int) -> dict:

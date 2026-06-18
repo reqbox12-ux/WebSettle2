@@ -1011,6 +1011,7 @@ class EmployeeBody(BaseModel):
     join_date:   str = ""
     note:        str = ""
     id_number:   str = ""               # 주민번호 → person_uid(멀티지점 묶음 키)
+    account_no:  str = ""               # 계좌번호 (암호화 저장)
     roles:       list[str] = []         # CRM 직무 (최대 2개)
     commission_percent: float = 0       # 트레이너/프로 %정산 개인요율
     work_type:   str = "commute"        # 'commute'(출퇴근/기본급+수업료) | 'freelance'(수업료만)

@@ -482,11 +482,12 @@ async def api_login(body: LoginBody):
         return _issue_staff_token(emp["name"], b, emp.get("must_change_pw", False))
 
     elif body.role == "member":
+        # 전화번호는 암호화 저장 → blind index(phone_hash)로 조회. 이메일은 평문 fallback.
+        from shared.crypto import blind_phone as _bph
         conn = get_conn()
-        # Match by phone (last 4 = PIN) or email
         member = _one(conn.execute(
-            "SELECT * FROM members WHERE (phone=? OR email=?) AND status='active' LIMIT 1",
-            (identifier, identifier)
+            "SELECT * FROM members WHERE (phone_hash=? OR email=?) AND status='active' LIMIT 1",
+            (_bph(identifier), identifier)
         ))
         conn.close()
         if not member:

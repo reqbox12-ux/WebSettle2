@@ -9,15 +9,18 @@ domains/branch_app/crm_ext.py — CRM 확장 스키마/로직 (Phase 3~6)
 from shared.db import get_conn
 
 
+from shared.crypto import dec_row as _dec_row
+
+
 def _rows(cur):
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    return [_dec_row(dict(zip(cols, r))) for r in cur.fetchall()]
 
 
 def _one(cur):
     cols = [d[0] for d in cur.description]
     row = cur.fetchone()
-    return dict(zip(cols, row)) if row else None
+    return _dec_row(dict(zip(cols, row))) if row else None
 
 
 def init_crm_ext_tables():
@@ -906,10 +909,14 @@ def confirm_crm_payroll(year: int, month: int, admin_name: str, branch: str = ""
 # ── Phase 6: 일일보고 (자동집계 + 코멘트) ────────────────────────
 def daily_report_autodata(employee_id: int, branch: str, date_str: str) -> dict:
     """그날의 내 매출 + 진행 수업 자동 집계."""
+    from shared.crypto import decrypt as _dec
     conn = get_conn()
+    # 직원 이름은 암호화 저장 → 복호화 후 sold_by(평문 스냅샷)와 매칭
+    _nm = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()
+    emp_name = _dec(_nm[0]) if _nm else ""
     sales = _rows(conn.execute(
-        "SELECT * FROM sales WHERE branch=? AND sale_date=? AND sold_by=(SELECT name FROM employees WHERE id=?)",
-        (branch, date_str, employee_id)))
+        "SELECT * FROM sales WHERE branch=? AND sale_date=? AND sold_by=?",
+        (branch, date_str, emp_name)))
     sess = _rows(conn.execute("""
         SELECT s.*, e.product_name, e.member_name FROM lesson_sessions s
         JOIN lesson_enrollments e ON e.id=s.enrollment_id
