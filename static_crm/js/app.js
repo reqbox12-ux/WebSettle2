@@ -60,8 +60,8 @@
     return fetch(window.API_BASE + path, { method, headers, body: formData });
   }
 
-  // ── 가격 표기 규칙: 10원 단위 반올림 ──────────────────────────
-  function roundPrice(amount){ return Math.floor((Number(amount)||0)/10 + 0.5)*10; }
+  // ── 가격 표기 규칙: 100원 단위 반올림 ─────────────────────────
+  function roundPrice(amount){ return Math.floor((Number(amount)||0)/100 + 0.5)*100; }
   // VAT 포함가 → 결제수단별 표기액 (현금/계좌이체만 VAT 제외)
   function priceByMethod(base, pm){
     base = Number(base)||0;
