@@ -2,7 +2,19 @@
 domains/dashboard/service.py — 대시보드 데이터 집계 서비스
 """
 import pandas as pd
-import streamlit as st
+try:
+    import streamlit as st           # Streamlit 환경(구 ERP)
+except ModuleNotFoundError:
+    # FastAPI 환경(신 ERP): streamlit 미설치 → cache_data를 무해한 통과 데코레이터로 대체
+    class _DummyST:
+        @staticmethod
+        def cache_data(*dargs, **dkwargs):
+            if dargs and callable(dargs[0]) and not dkwargs:
+                return dargs[0]                     # @st.cache_data (괄호 없이)
+            def _wrap(fn):                          # @st.cache_data(ttl=...)
+                return fn
+            return _wrap
+    st = _DummyST()
 from shared.db import (
     get_card_by_branch, get_branch_cash_revenue, get_payroll_summary,
     get_expense_by_category, get_revenue_by_category, get_insurance_summary,
