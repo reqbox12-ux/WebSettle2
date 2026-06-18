@@ -388,11 +388,10 @@ def init_crm_ext_tables():
 
 # ── Phase 3: 결제수단/VAT 헬퍼 ───────────────────────────────
 def round_price(amount) -> int:
-    """가격 표기 규칙: 10원 단위 반올림 후 100원 단위 절사.
-    예) 9,625 → (10원반올림) 9,630 → (100원절사) 9,600"""
+    """가격 표기 규칙: 10원 단위 반올림(1원 자리 반올림 → 10원 단위로 표기).
+    예) 9,625 → 9,630 · 38,500 → 38,500 · 4,812 → 4,810"""
     amt = float(amount or 0)
-    r10 = int(amt / 10 + 0.5) * 10   # 10원 단위 반올림
-    return (r10 // 100) * 100          # 100원 단위 절사(버림)
+    return int(amt / 10 + 0.5) * 10   # 10원 단위 반올림
 
 
 def charge_amount(base_amount: int, pay_method: str) -> int:
