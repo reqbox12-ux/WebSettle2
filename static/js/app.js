@@ -79,6 +79,7 @@
   const PAGES = {
     dashboard:  { label: '대시보드',   icon: 'layout-grid',  sec: 'WORKSPACE' },
     live:       { label: '실시간 매출', icon: 'radio',        sec: 'WORKSPACE' },
+    recon:      { label: '매출 대사·마감', icon: 'scale',     sec: 'WORKSPACE' },
     branch:     { label: '지점',       icon: 'building-2',   sec: '관리' },
     payroll:    { label: '인사/급여',  icon: 'credit-card',  sec: '관리' },
     attendance: { label: '출퇴근 현황', icon: 'clock',        sec: '관리' },
@@ -127,8 +128,8 @@
 
   function renderPage() {
     const el = document.getElementById('page-content');
-    ({ dashboard: renderDashboard, live: renderLive, branch: renderBranch, attendance: renderAttendance,
-       payroll: renderPayroll, upload: renderUpload, settings: renderSettings,
+    ({ dashboard: renderDashboard, live: renderLive, recon: renderRecon, branch: renderBranch,
+       attendance: renderAttendance, payroll: renderPayroll, upload: renderUpload, settings: renderSettings,
     }[currentPage] || (() => { el.innerHTML = '<div class="empty">준비 중</div>'; }))(el);
   }
 
@@ -335,6 +336,71 @@
               <td style="font-weight:700">${W(x.amount)}</td><td>${x.pay}</td><td>${x.by||'—'}</td></tr>`).join('')
               || '<tr><td colspan="8" class="empty">결제 없음</td></tr>'}</tbody></table></div></div>`;
   }
+
+  /* ════ 매출 대사 + 월 마감 ═══════════════════════════════════ */
+  async function renderRecon(el) {
+    el.innerHTML = `
+      <div class="ph"><div class="ph-title">매출 대사 · 월 마감</div>
+        <div class="ph-sub">CRM 카드결제 vs 카드사 업로드 매출 비교 → 확인 후 월 마감(잠금)</div></div>
+      <div class="filter-bar">${ymFilter(loadRecon)}</div>
+      <div id="recon-body"><div class="empty">로드 중…</div></div>`;
+    loadRecon();
+  }
+
+  async function loadRecon() {
+    const body = document.getElementById('recon-body');
+    if (!body) return;
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const [rr, lr] = await Promise.all([
+      api(`/api/recon?year=${selYear}&month=${selMonth}`),
+      api(`/api/locks?year=${selYear}`),
+    ]);
+    if (!rr || !rr.ok) { body.innerHTML = '<div class="empty">오류</div>'; return; }
+    const d = await rr.json();
+    const locks = lr && lr.ok ? await lr.json() : [];
+    const W = v => Math.round(v||0).toLocaleString();
+    const locked = locks.some(l => l.year===selYear && l.month===selMonth && (l.branch===''));
+    const stLbl = { match:'<span class="bdg pos">일치</span>',
+      crm_more:'<span class="bdg neg">CRM 많음</span>', card_more:'<span class="bdg neg">카드사 많음</span>' };
+
+    const rows = d.rows.map(r=>`<tr>
+      <td style="text-align:left;font-weight:600">${r.branch}</td>
+      <td>${W(r.crm)}원</td><td>${W(r.card)}원</td>
+      <td style="font-weight:700;color:${r.diff===0?'var(--ink3)':(Math.abs(r.diff)<=Math.max(r.card*0.05,1000)?'var(--ink3)':'var(--red)')}">${r.diff>0?'+':''}${W(r.diff)}</td>
+      <td>${stLbl[r.status]||r.status}</td></tr>`).join('');
+
+    body.innerHTML = `
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kpi"><div class="kpi-lbl">CRM 카드결제 합계</div><div class="kpi-val">${W(d.total_crm)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">카드사 업로드 합계</div><div class="kpi-val">${W(d.total_card)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">불일치 지점</div><div class="kpi-val ${d.mismatch?'neg':'pos'}">${d.mismatch}곳</div></div>
+      </div>
+      <div class="card" style="padding:14px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <span style="font-weight:700">${selYear}년 ${selMonth}월 마감 상태:</span>
+        ${locked ? '<span class="bdg pos">🔒 마감됨</span>' : '<span class="bdg neg">열림</span>'}
+        ${user.role==='admin' ? (locked
+          ? `<button class="xbtn" onclick="unlockMonth()">마감 해제</button>`
+          : `<button class="xbtn primary" onclick="lockMonth()">🔒 이 달 마감(잠금)</button>`) : ''}
+        <span style="font-size:12px;color:var(--ink3)">마감하면 해당 월 데이터 변경이 잠깁니다 (대사 확인 후 권장)</span>
+      </div>
+      <div class="card"><div class="card-head">지점별 대사 (카드 수수료 5% 이내는 '일치' 처리)</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl"><thead><tr><th>지점</th><th>CRM 카드결제</th><th>카드사 매출</th><th>차이</th><th>판정</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="5" class="empty">데이터 없음</td></tr>'}</tbody></table></div>
+        <div style="padding:0 18px 14px;font-size:12px;color:var(--ink3)">
+          💡 '카드사 많음'=CRM 미입력 의심 / 'CRM 많음'=카드사 미반영·미입금 의심</div></div>`;
+  }
+
+  window.lockMonth = async function () {
+    if (!confirm(`${selYear}년 ${selMonth}월을 마감(잠금)할까요?`)) return;
+    const r = await api('/api/locks', { method:'POST', body: JSON.stringify({ year:selYear, month:selMonth, branch:'' }) });
+    if (r && r.ok) { showToast('🔒 마감 완료'); loadRecon(); } else showToast('마감 실패', 'err');
+  };
+  window.unlockMonth = async function () {
+    if (!confirm('마감을 해제할까요?')) return;
+    const r = await api(`/api/locks?year=${selYear}&month=${selMonth}&branch=`, { method:'DELETE' });
+    if (r && r.ok) { showToast('마감 해제'); loadRecon(); } else showToast('실패', 'err');
+  };
 
   /* ════ 지점 (상세/관리/매출입력) ═══════════════════════════ */
   let selBranch = '';

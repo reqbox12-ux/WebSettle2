@@ -255,6 +255,92 @@ async def api_live_sales(request: Request, year: int, month: int):
     }
 
 
+# ── 카드사 매출 대사 (Reconciliation) ─────────────────────────
+@app.get("/api/recon")
+async def api_recon(request: Request, year: int, month: int):
+    """CRM 카드결제 합계 vs 카드사 업로드 매출 합계를 지점별 비교."""
+    require_auth(request)
+    from modules.db import get_conn
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    # CRM: 카드/토스 결제 (환불 제외)
+    crm = dict(conn.execute(
+        "SELECT branch, COALESCE(SUM(amount),0) FROM sales "
+        "WHERE sale_date LIKE ? AND pay_method IN ('카드','토스') AND pay_method NOT LIKE '%환불%' "
+        "GROUP BY branch", (f"{prefix}%",)).fetchall())
+    # 카드사 업로드: card_sales (total_amount = VAT 포함 총액)
+    card = dict(conn.execute(
+        "SELECT branch, COALESCE(SUM(total_amount),0) FROM card_sales "
+        "WHERE year=? AND month=? GROUP BY branch", (year, month)).fetchall())
+    conn.close()
+
+    branches = sorted(set(crm) | set(card))
+    rows = []
+    for b in branches:
+        c = int(crm.get(b, 0)); k = int(card.get(b, 0))
+        diff = c - k
+        # 카드 수수료(~2-3%) 감안: 절대차가 카드사액의 5% 이내면 '정상'
+        tol = max(int(k * 0.05), 1000)
+        status = "match" if abs(diff) <= tol else ("crm_more" if diff > 0 else "card_more")
+        rows.append({"branch": b, "crm": c, "card": k, "diff": diff, "status": status})
+    return {
+        "rows": rows,
+        "total_crm": sum(r["crm"] for r in rows),
+        "total_card": sum(r["card"] for r in rows),
+        "mismatch": sum(1 for r in rows if r["status"] != "match"),
+    }
+
+
+# ── 월 마감(락) ───────────────────────────────────────────────
+@app.get("/api/locks")
+async def api_locks_get(request: Request, year: int = 0):
+    require_auth(request)
+    from domains.branch_app.ops import list_locks
+    return list_locks(year or None)
+
+
+class LockBody(BaseModel):
+    year:   int
+    month:  int
+    branch: str = ""   # 빈값=전사
+
+
+@app.post("/api/locks")
+async def api_lock(request: Request, body: LockBody):
+    user = require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(403, "관리자만 마감할 수 있습니다")
+    from domains.branch_app.ops import lock_month, log_action
+    lock_month(body.year, body.month, body.branch, user["name"])
+    log_action(user["name"], "month.lock",
+               target=f"{body.year}-{body.month:02d} {body.branch or '전사'}",
+               actor_role="admin")
+    _clear_cache()
+    return {"ok": True}
+
+
+@app.delete("/api/locks")
+async def api_unlock(request: Request, year: int, month: int, branch: str = ""):
+    user = require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(403, "관리자만 가능합니다")
+    from domains.branch_app.ops import unlock_month, log_action
+    unlock_month(year, month, branch)
+    log_action(user["name"], "month.unlock", target=f"{year}-{month:02d} {branch or '전사'}",
+               actor_role="admin")
+    return {"ok": True}
+
+
+# ── 감사 로그 조회 ────────────────────────────────────────────
+@app.get("/api/audit")
+async def api_audit(request: Request, action: str = "", limit: int = 200):
+    user = require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(403, "관리자 전용")
+    from domains.branch_app.ops import get_audit_logs
+    return get_audit_logs(action=action, limit=limit)
+
+
 # ── 지점 상세 API ─────────────────────────────────────────────
 @app.get("/api/branches")
 async def api_branches(request: Request):
