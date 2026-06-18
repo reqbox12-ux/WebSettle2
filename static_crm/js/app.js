@@ -2411,8 +2411,8 @@
         </div>
       </div>`;
     if (window.lucide) lucide.createIcons();
-    // QR 생성 (외부 무료 API — 접속URL은 비밀 아님)
-    const portalUrl = location.origin;
+    // QR 생성 (외부 무료 API — 접속URL은 비밀 아님). 회원 로그인 화면으로 연결
+    const portalUrl = location.origin + '/login/member';
     const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=${encodeURIComponent(portalUrl)}`;
     const img = document.getElementById('qr-img');
     const dl  = document.getElementById('qr-dl');

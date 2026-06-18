@@ -320,7 +320,16 @@ async def root(request: Request):
 
 @app.get("/login")
 async def login_page(request: Request):
-    return templates.TemplateResponse(request=request, name="login.html")
+    """직원 로그인"""
+    return templates.TemplateResponse(request=request, name="login.html",
+        context={"login_role": "staff"})
+
+
+@app.get("/login/member")
+async def login_member_page(request: Request):
+    """회원 로그인 (QR 접속 대상)"""
+    return templates.TemplateResponse(request=request, name="login.html",
+        context={"login_role": "member"})
 
 
 @app.get("/home")
