@@ -1298,6 +1298,11 @@
       </div>`;
     if (window.lucide) lucide.createIcons();
     renderHomeCalendar();
+    // 최초 로그인 비밀번호 변경 강제
+    try {
+      const me = await (await api('/api/auth/me')).json();
+      if (me && me.must_change_pw) openChangePin(true);
+    } catch (e) {}
   }
 
   // ── 회원 홈 달력 (진행중 GX수업) ───────────────────────────────
@@ -1361,6 +1366,11 @@
   async function renderMyPage(container) {
     container.innerHTML = `
       <div class="page">
+        <div class="card" style="margin-bottom:12px">
+          <div class="card-head"><div class="card-title">👤 ${user.name || '회원'}님</div>
+            <button class="btn sm" onclick="openChangePin()">비밀번호 변경</button></div>
+          <div style="font-size:13px;color:var(--muted)">라온스포츠 · ${user.branch||''}</div>
+        </div>
         <div class="card"><div class="card-head"><div class="card-title">🎟️ 내 쿠폰함</div></div>
           <div id="mp-coupons"><div class="empty">로딩 중…</div></div></div>
         <div id="member-lessons-slot"></div>
@@ -1380,6 +1390,24 @@
     await renderMemberLessons(container);
     if (window.lucide) lucide.createIcons();
   }
+
+  window.openChangePin = function (forced) {
+    createModal({
+      title: forced ? '비밀번호 변경 (최초 1회)' : '비밀번호 변경',
+      fields: [
+        { id:'cur', label: forced ? '임시 비밀번호(전화 뒷4자리)' : '현재 비밀번호', type:'text' },
+        { id:'nw',  label:'새 비밀번호 (4자 이상)', type:'text' },
+      ],
+      submitLabel:'변경',
+      onSubmit: async (data) => {
+        const r = await api('/api/my/change-pin', { method:'POST',
+          body: JSON.stringify({ current: data.cur, new: data.nw }) });
+        const d = r ? await r.json().catch(()=>({})) : {};
+        if (!r?.ok) throw new Error(d.detail || '변경 실패');
+        showToast('✅ 비밀번호가 변경되었습니다');
+      }
+    });
+  };
 
   window.openMyCoupons = async function () {
     const r = await api('/api/my/coupons');
@@ -2122,6 +2150,7 @@
         <div class="card-head">
           <div><div class="section-title">회원 관리</div><div class="section-sub">${user.branch}</div></div>
           <div style="display:flex;gap:8px">
+            <button class="btn" onclick="openSignupRequests()"><i data-lucide="user-check"></i> 가입요청 <span id="su-badge" class="badge red" style="display:none">0</span></button>
             <button class="btn" onclick="modalNewSale()"><i data-lucide="credit-card"></i> 결제 등록</button>
             <button class="btn primary" onclick="modalNewMember()"><i data-lucide="user-plus"></i> 신규 등록</button>
           </div>
@@ -2134,7 +2163,50 @@
       </div>`;
     if (window.lucide) lucide.createIcons();
     loadMembers('');
+    refreshSignupBadge();
   }
+
+  async function refreshSignupBadge() {
+    try {
+      const r = await api('/api/signup/requests');
+      const list = r && r.ok ? await r.json() : [];
+      const b = document.getElementById('su-badge');
+      if (b) { b.textContent = list.length; b.style.display = list.length ? 'inline-flex' : 'none'; }
+    } catch (e) {}
+  }
+  window.openSignupRequests = async function () {
+    const r = await api('/api/signup/requests');
+    const list = r && r.ok ? await r.json() : [];
+    const body = list.length ? list.map(s => {
+      let kids = ''; try { const k = JSON.parse(s.kids||'[]'); if (k.length) kids = ' · 자녀 '+k.map(x=>`${x.name}(${x.age})`).join(','); } catch(e){}
+      return `<div style="padding:10px 0;border-bottom:1px solid rgba(128,128,128,.15)">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <div><b>${s.name}</b> · ${s.phone}<br>
+            <span style="font-size:12px;opacity:.7">${s.dong?('동/호 '+s.dong+'/'+(s.ho||'')):''}${kids}</span></div>
+          <div style="white-space:nowrap">
+            <button class="btn sm primary" onclick="approveSignup(${s.id})">승인</button>
+            <button class="btn sm" onclick="rejectSignup(${s.id})">거절</button></div>
+        </div></div>`;
+    }).join('') : '<div class="empty" style="padding:20px">대기 중인 가입요청이 없습니다</div>';
+    closeModal();
+    const ov = document.createElement('div'); ov.className='modal-overlay'; ov.id='modal-overlay';
+    ov.addEventListener('click', e=>{ if(e.target===ov) closeModal(); });
+    ov.innerHTML = `<div class="modal"><div class="modal-header"><div class="modal-title">가입요청 (${list.length})</div>
+      <button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body" style="max-height:65vh;overflow:auto">${body}</div></div>`;
+    document.body.appendChild(ov);
+  };
+  window.approveSignup = async function (id) {
+    const r = await api(`/api/signup/requests/${id}/approve`, { method:'POST' });
+    const d = r ? await r.json().catch(()=>({})) : {};
+    if (r?.ok) { showToast('✅ 승인 — 회원 등록 완료'); openSignupRequests(); refreshSignupBadge(); loadMembers(''); }
+    else showToast(d.detail||'승인 실패','err');
+  };
+  window.rejectSignup = async function (id) {
+    if (!confirm('이 가입요청을 거절할까요?')) return;
+    const r = await api(`/api/signup/requests/${id}/reject`, { method:'POST' });
+    if (r?.ok) { showToast('거절됨'); openSignupRequests(); refreshSignupBadge(); }
+  };
 
   async function loadMembers(q) {
     const branch = user.branch || '';
@@ -3051,8 +3123,12 @@
         </div>
       </div>`;
     if (window.lucide) lucide.createIcons();
-    // QR 생성 (외부 무료 API — 접속URL은 비밀 아님). 회원 로그인 화면으로 연결
-    const portalUrl = location.origin + '/login/member';
+    // 지점 전용 가입 QR — 지점 토큰 포함 (다른 지점 가입 불가)
+    let portalUrl = location.origin + '/signup';
+    try {
+      const tr = await api('/api/branch-token');
+      if (tr && tr.ok) { const t = await tr.json(); portalUrl = location.origin + '/signup?b=' + encodeURIComponent(t.token); }
+    } catch (e) {}
     const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=${encodeURIComponent(portalUrl)}`;
     const img = document.getElementById('qr-img');
     const dl  = document.getElementById('qr-dl');

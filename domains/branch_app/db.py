@@ -298,6 +298,10 @@ def init_branch_tables():
         conn.execute("ALTER TABLE members ADD COLUMN phone_hash TEXT DEFAULT ''")
     if "name_hash" not in _mcols:
         conn.execute("ALTER TABLE members ADD COLUMN name_hash TEXT DEFAULT ''")
+    if "pin_hash" not in _mcols:
+        conn.execute("ALTER TABLE members ADD COLUMN pin_hash TEXT DEFAULT ''")
+    if "must_change_pw" not in _mcols:
+        conn.execute("ALTER TABLE members ADD COLUMN must_change_pw INTEGER DEFAULT 0")
     conn.commit()
 
     # ── 개인정보 암호화 마이그레이션 (회원: 이름·전화·동·호) ──

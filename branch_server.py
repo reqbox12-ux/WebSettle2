@@ -178,6 +178,11 @@ def _one(cur) -> dict | None:
     return dict(zip(cols, row)) if row else None
 
 
+def hash_password(plain: str) -> str:
+    """bcrypt 해시 생성."""
+    return bcrypt.hashpw(str(plain).encode(), bcrypt.gensalt()).decode()
+
+
 def verify_password(plain: str, hashed: str) -> bool:
     """Support both bcrypt and sha256 hashes."""
     if not plain or not hashed:
@@ -493,24 +498,30 @@ async def api_login(body: LoginBody):
         if not member:
             _record_fail(identifier)
             raise HTTPException(status_code=401, detail="회원 정보를 찾을 수 없습니다")
-        # PIN check: stored as last 4 digits of phone, or pin column
-        pin = str(member.get("pin", ""))
-        if not pin or (not verify_password(body.password, pin) and body.password != pin):
+        # PIN 검증: pin_hash(bcrypt) 우선, 없으면 평문 pin(레거시/임시PIN) 비교
+        pin_hash = str(member.get("pin_hash", "") or "")
+        pin      = str(member.get("pin", "") or "")
+        ok = verify_password(body.password, pin_hash) if pin_hash else False
+        if not ok and pin:
+            ok = (body.password == pin)
+        if not ok:
             _record_fail(identifier)
             raise HTTPException(status_code=401, detail="비밀번호(PIN)가 올바르지 않습니다")
         _clear_fails(identifier)
+        must_change = bool(member.get("must_change_pw"))
         token = create_token({
             "sub":    str(member["id"]),
             "role":   "member",
             "name":   member["name"],
             "branch": member.get("branch", ""),
+            "must_change_pw": must_change,
         })
         return {
             "token":  token,
             "role":   "member",
             "name":   member["name"],
             "branch": member.get("branch", ""),
-            "must_change_pw": False,
+            "must_change_pw": must_change,
         }
 
     raise HTTPException(status_code=400, detail="role은 'staff' 또는 'member'여야 합니다")
@@ -2028,6 +2039,130 @@ async def api_event_claim_coupon(request: Request, event_id: int):
     if not ok:
         raise HTTPException(status_code=400, detail=msg)
     return {"ok": True, "msg": msg}
+
+
+# ── 지점 토큰 + 회원 가입요청(승인제) ────────────────────────────────────────────
+import hashlib as _hl, base64 as _b64
+
+def make_branch_token(branch: str) -> str:
+    sig = _hl.sha256((SECRET_KEY + "|" + branch).encode()).hexdigest()[:16]
+    b = _b64.urlsafe_b64encode(branch.encode()).decode().rstrip("=")
+    return f"{b}.{sig}"
+
+def verify_branch_token(token: str) -> str | None:
+    try:
+        b, sig = token.split(".")
+        branch = _b64.urlsafe_b64decode(b + "=" * (-len(b) % 4)).decode()
+        exp = _hl.sha256((SECRET_KEY + "|" + branch).encode()).hexdigest()[:16]
+        import hmac as _hm
+        return branch if _hm.compare_digest(sig, exp) else None
+    except Exception:
+        return None
+
+
+@app.get("/api/branch-token")
+async def api_branch_token(request: Request):
+    """관리자: 우리 지점 가입 토큰 발급 (QR/링크용)."""
+    user = require_staff(request)
+    branch = user.get("branch", "")
+    if not branch:
+        raise HTTPException(status_code=400, detail="지점 정보가 없습니다")
+    return {"branch": branch, "token": make_branch_token(branch)}
+
+
+@app.get("/signup")
+async def signup_page(request: Request, b: str = ""):
+    branch = verify_branch_token(b) if b else None
+    return templates.TemplateResponse(
+        request=request, name="signup.html",
+        context={"branch": branch or "", "token": b, "valid": bool(branch)})
+
+
+@app.get("/api/signup/branch")
+async def api_signup_branch(token: str = ""):
+    branch = verify_branch_token(token) if token else None
+    if not branch:
+        raise HTTPException(status_code=400, detail="유효하지 않은 가입 링크입니다")
+    return {"branch": branch}
+
+
+class SignupBody(BaseModel):
+    token: str
+    name:  str
+    phone: str
+    dong:  str = ""
+    ho:    str = ""
+    kids:  str = ""
+
+
+@app.post("/api/signup/request")
+async def api_signup_request(body: SignupBody):
+    branch = verify_branch_token(body.token)
+    if not branch:
+        raise HTTPException(status_code=400, detail="유효하지 않은 가입 링크입니다. 지점 QR로 접속하세요.")
+    if not body.name.strip() or len(re.sub(r"[^0-9]", "", body.phone)) < 8:
+        raise HTTPException(status_code=400, detail="이름과 전화번호를 정확히 입력하세요")
+    from domains.branch_app.crm_ext import create_signup_request
+    ok, msg, rid = create_signup_request(branch=branch, name=body.name.strip(),
+        phone=body.phone.strip(), dong=body.dong.strip(), ho=body.ho.strip(), kids=body.kids.strip())
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "msg": msg, "id": rid}
+
+
+@app.get("/api/signup/requests")
+async def api_signup_requests(request: Request):
+    user = require_staff(request)
+    from domains.branch_app.crm_ext import list_signup_requests
+    return list_signup_requests(user.get("branch", ""))
+
+
+@app.post("/api/signup/requests/{req_id}/approve")
+async def api_signup_approve(request: Request, req_id: int):
+    user = require_staff(request)   # 지점 직원 누구나 승인
+    from domains.branch_app.crm_ext import approve_signup_request
+    ok, msg, mid = approve_signup_request(req_id, user.get("name", ""))
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "msg": msg, "member_id": mid}
+
+
+@app.post("/api/signup/requests/{req_id}/reject")
+async def api_signup_reject(request: Request, req_id: int):
+    user = require_staff(request)
+    from domains.branch_app.crm_ext import reject_signup_request
+    reject_signup_request(req_id, user.get("name", ""))
+    return {"ok": True}
+
+
+# ── 회원 PIN(비밀번호) 변경 ──────────────────────────────────────────────────────
+class ChangePinBody(BaseModel):
+    current: str
+    new:     str
+
+
+@app.post("/api/my/change-pin")
+async def api_my_change_pin(request: Request, body: ChangePinBody):
+    user = require_member(request)
+    mid = int(user.get("sub") or 0)
+    conn = get_conn()
+    row = _one(conn.execute("SELECT pin, pin_hash FROM members WHERE id=?", (mid,)))
+    if not row:
+        conn.close(); raise HTTPException(status_code=404, detail="회원 정보를 찾을 수 없습니다")
+    # 현재 PIN 확인 (pin_hash 우선, 없으면 평문 pin)
+    ok = False
+    if row.get("pin_hash"):
+        ok = verify_password(body.current, row["pin_hash"])
+    if not ok and row.get("pin"):
+        ok = (body.current == str(row["pin"]))
+    if not ok:
+        conn.close(); raise HTTPException(status_code=401, detail="현재 비밀번호가 올바르지 않습니다")
+    if len(body.new) < 4:
+        conn.close(); raise HTTPException(status_code=400, detail="새 비밀번호는 4자 이상이어야 합니다")
+    conn.execute("UPDATE members SET pin_hash=?, pin='', must_change_pw=0 WHERE id=?",
+                 (hash_password(body.new), mid))
+    conn.commit(); conn.close()
+    return {"ok": True, "msg": "비밀번호가 변경되었습니다"}
 
 
 # ── Classes API ────────────────────────────────────────────────────────────────

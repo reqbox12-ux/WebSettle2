@@ -412,6 +412,22 @@ def init_crm_ext_tables():
             created_at       TEXT DEFAULT (datetime('now','localtime'))
         );
 
+        -- ── 회원 가입요청 (지점 토큰으로만 접수, 승인제) ─────────
+        CREATE TABLE IF NOT EXISTS signup_requests (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch      TEXT NOT NULL,
+            name        TEXT DEFAULT '',          -- 암호화
+            phone       TEXT DEFAULT '',          -- 암호화
+            phone_hash  TEXT DEFAULT '',          -- 중복확인용
+            dong        TEXT DEFAULT '',          -- 암호화
+            ho          TEXT DEFAULT '',          -- 암호화
+            kids        TEXT DEFAULT '',          -- 암호화(JSON: [{name,age}])
+            status      TEXT DEFAULT 'pending',   -- pending|approved|rejected
+            processed_by TEXT DEFAULT '',
+            member_id   INTEGER DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now','localtime'))
+        );
+
         -- ── 회원 쿠폰함 (발급분) ───────────────────────────────
         CREATE TABLE IF NOT EXISTS member_coupons (
             id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1154,3 +1170,66 @@ def set_event_coupon(event_id: int, coupon_id: int):
     conn = get_conn()
     conn.execute("UPDATE events SET coupon_id=? WHERE id=?", (coupon_id, event_id))
     conn.commit(); conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
+#  회원 가입요청 (지점 토큰 기반, 승인제)
+# ══════════════════════════════════════════════════════════════
+def create_signup_request(*, branch, name, phone, dong="", ho="", kids="") -> tuple[bool, str, int]:
+    from shared.crypto import encrypt as _enc, blind_phone as _bph
+    ph_hash = _bph(phone)
+    conn = get_conn()
+    dup = conn.execute(
+        "SELECT 1 FROM signup_requests WHERE branch=? AND phone_hash=? AND status='pending'",
+        (branch, ph_hash)).fetchone()
+    if dup:
+        conn.close(); return False, "이미 접수된 가입요청이 있습니다", 0
+    exist = conn.execute(
+        "SELECT 1 FROM members WHERE branch=? AND phone_hash=?", (branch, ph_hash)).fetchone()
+    if exist:
+        conn.close(); return False, "이미 등록된 회원입니다", 0
+    cur = conn.execute("""INSERT INTO signup_requests (branch, name, phone, phone_hash, dong, ho, kids)
+        VALUES (?,?,?,?,?,?,?)""",
+        (branch, _enc(name), _enc(phone), ph_hash, _enc(dong), _enc(ho), _enc(kids)))
+    rid = cur.lastrowid
+    conn.commit(); conn.close()
+    return True, "가입요청이 접수되었습니다. 승인 후 이용 가능합니다.", rid
+
+
+def list_signup_requests(branch: str, status: str = "pending") -> list[dict]:
+    conn = get_conn()
+    out = _rows(conn.execute(
+        "SELECT * FROM signup_requests WHERE branch=? AND status=? ORDER BY id DESC",
+        (branch, status)))
+    conn.close()
+    return out
+
+
+def reject_signup_request(req_id: int, by_name: str = "") -> bool:
+    conn = get_conn()
+    conn.execute("UPDATE signup_requests SET status='rejected', processed_by=? WHERE id=? AND status='pending'",
+                 (by_name, req_id))
+    ok = conn.total_changes > 0
+    conn.commit(); conn.close()
+    return ok
+
+
+def approve_signup_request(req_id: int, by_name: str = "") -> tuple[bool, str, int]:
+    """가입요청 승인 → 회원 생성(임시PIN=전화뒷4, 첫로그인 변경강제)."""
+    from domains.branch_app.db import upsert_member
+    conn = get_conn()
+    r = _one(conn.execute("SELECT * FROM signup_requests WHERE id=? AND status='pending'", (req_id,)))
+    conn.close()
+    if not r:
+        return False, "처리할 수 없는 요청입니다", 0
+    mid = upsert_member({
+        "branch": r["branch"], "name": r["name"], "phone": r["phone"],
+        "dong": r["dong"], "ho": r["ho"],
+        "note": (("키즈:" + r["kids"]) if r.get("kids") else ""), "status": "active",
+    })
+    conn = get_conn()
+    conn.execute("UPDATE members SET must_change_pw=1 WHERE id=?", (mid,))
+    conn.execute("UPDATE signup_requests SET status='approved', processed_by=?, member_id=? WHERE id=?",
+                 (by_name, mid, req_id))
+    conn.commit(); conn.close()
+    return True, "승인되었습니다", mid
