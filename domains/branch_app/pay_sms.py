@@ -314,6 +314,8 @@ def confirm_order(order_id: str, payment_key: str, amount: int) -> dict:
         create_gx_enrollment(branch=order["branch"], gx_product_id=product["id"],
                              member_id=order["member_id"], member_name=order["member_name"],
                              sale_id=sale_id, target_ym=tym, is_test=itest)
+        # 결제로 최소인원 충족 시 해당 월 반 자동 '진행' 확정
+        _auto_run_if_min_met(product["id"], tym, itest)
     elif product and product.get("category") == "lesson":
         product["price"] = order["base_amount"] or product.get("price", 0)
         product["_commission_percent"] = 0
@@ -394,6 +396,64 @@ def send_payment_link(*, base_url, order, member_name, member_phone, product_nam
     return send_sms(member_phone, msg, title="결제 안내", name=member_name)
 
 
+# ── 재등록(다음달분) 결제링크 일괄 발송 ───────────────────────
+def send_reregister_links(*, base_url, gx_product_id, sent_by="") -> dict:
+    """기존 수강 회원에게 '다음 달분' 결제 링크를 개별 생성·발송.
+    - 금액 = 다음달 1일 기준 풀계산(gx_price). 날짜 무관 고정.
+    - 정원이 차면 더 보내지 않음(선착순, 자리보장 없음).
+    - 이미 다음달분 주문/수강이 있는 회원은 건너뜀.
+    - shop 화면엔 안 보이고 문자 링크로만 결제(channel='rereg').
+    """
+    product = get_product(gx_product_id)
+    if not product:
+        return {"ok": False, "error": "상품을 찾을 수 없습니다"}
+    tym = next_ym()
+    info = gx_price(product, tym)
+    base = info["charge"]
+    if base <= 0:
+        return {"ok": False, "error": "다음 달 수업이 없어 재등록 금액을 계산할 수 없습니다"}
+    amount = charge_amount(base, "토스")
+    branch = product.get("branch", "")
+    members = get_class_members(gx_product_id)
+
+    conn = get_conn()
+    sent = skipped = failed = blocked = 0
+    for m in members:
+        # 정원 체크(매 발송마다 갱신)
+        hc = gx_headcounts(gx_product_id, tym)
+        if hc["full"]:
+            blocked = len(members) - (sent + skipped + failed)
+            break
+        mid = m["id"]
+        # 이미 다음달분 주문/수강이 있으면 skip
+        dup = conn.execute(
+            "SELECT 1 FROM payment_orders WHERE product_id=? AND member_id=? AND target_ym=? "
+            "AND status IN ('pending','paid') LIMIT 1", (gx_product_id, mid, tym)).fetchone()
+        if not dup:
+            dup = conn.execute(
+                "SELECT 1 FROM gx_enrollments WHERE gx_product_id=? AND member_id=? AND target_ym=? "
+                "AND status='active' LIMIT 1", (gx_product_id, mid, tym)).fetchone()
+        if dup:
+            skipped += 1
+            continue
+        order = create_order(
+            branch=branch, member_id=mid, member_name=m["name"], member_phone=m["phone"],
+            product_id=gx_product_id, product_name=f"{product['name']} (다음 달 {info['remaining']}회분)",
+            category="gx", base_amount=base, amount=amount, pay_method="토스",
+            channel="rereg", created_by=sent_by, target_ym=tym)
+        res = send_payment_link(base_url=base_url, order=order, member_name=m["name"],
+                                member_phone=m["phone"],
+                                product_name=f"{product['name']} 다음 달 재등록", amount=amount)
+        if res.get("ok"):
+            sent += 1
+        else:
+            failed += 1
+    conn.close()
+    return {"ok": True, "target_ym": tym, "amount": amount, "sent": sent,
+            "skipped": skipped, "failed": failed, "blocked": blocked,
+            "total": len(members)}
+
+
 # ── GX 신청/개강 로직 ─────────────────────────────────────────
 def gx_apply(*, branch, gx_product_id, member_id, member_name, member_phone, target_ym="") -> dict:
     """최소인원 미달 시 개강대기 신청 등록. 충족되면 caller가 결제 진행 가능."""
@@ -464,6 +524,95 @@ def gx_visible_yms() -> dict:
 
 def next_ym() -> str:
     return gx_visible_yms()["next_ym"]
+
+
+# ── 반 상태(대기/진행) 관리 ──────────────────────────────────
+def _set_class_status(gx_product_id: int, ym: str, status: str,
+                      decided_by: str = "", is_test: int = 0):
+    conn = get_conn()
+    conn.execute("""INSERT INTO gx_class_status (gx_product_id, ym, status, decided_by, decided_at, is_test)
+                    VALUES (?,?,?,?,datetime('now','localtime'),?)
+                    ON CONFLICT(gx_product_id, ym) DO UPDATE SET
+                      status=excluded.status, decided_by=excluded.decided_by,
+                      decided_at=excluded.decided_at""",
+                 (gx_product_id, ym, status, decided_by, is_test))
+    conn.commit()
+    conn.close()
+
+
+def _auto_run_if_min_met(gx_product_id: int, ym: str, is_test: int = 0):
+    """결제로 최소인원 충족 시 자동 '진행' 확정 (이미 진행이면 무시)."""
+    hc = gx_headcounts(gx_product_id, ym)
+    if hc["status"] == "running":
+        return
+    if hc["min"] > 0 and hc["enrolled"] >= hc["min"]:
+        _set_class_status(gx_product_id, ym, "running", decided_by="자동(인원충족)", is_test=is_test)
+
+
+def gx_set_class_running(base_url: str, gx_product_id: int, ym: str = "",
+                         decided_by: str = "", notify: bool = True) -> dict:
+    """관리자가 반을 '진행'으로 확정. 미달이어도 강행 가능 + 대기/수강자에게 결제안내."""
+    from domains.branch_app.testmode import today_str, is_test_flag
+    if not ym:
+        ym = today_str()[:7]
+    _set_class_status(gx_product_id, ym, "running", decided_by=decided_by, is_test=is_test_flag())
+    notified = 0
+    if notify:
+        conn = get_conn()
+        prod = _one(conn.execute("SELECT name, branch FROM products WHERE id=?", (gx_product_id,)))
+        apps = conn.execute("""SELECT member_name, member_phone FROM gx_applications
+                               WHERE gx_product_id=? AND status='waiting' AND target_ym=?""",
+                            (gx_product_id, ym)).fetchall()
+        conn.close()
+        for name, phone in apps:
+            msg = (f"[라온스포츠 {prod['branch']}]\n"
+                   f"{name}님, 신청하신 '{prod['name']}' 수업이 개강 확정되었습니다!\n"
+                   f"아래에서 결제하시면 수강이 확정됩니다.\n{base_url}/app")
+            if send_sms(phone, msg, title="개강 확정 안내", name=name).get("ok"):
+                notified += 1
+        conn = get_conn()
+        conn.execute("UPDATE gx_applications SET status='notified' "
+                     "WHERE gx_product_id=? AND status='waiting' AND target_ym=?",
+                     (gx_product_id, ym))
+        conn.commit()
+        conn.close()
+    return {"ok": True, "status": "running", "ym": ym, "notified": notified}
+
+
+def gx_set_class_waiting(gx_product_id: int, ym: str = "", decided_by: str = "") -> dict:
+    """관리자가 반을 '대기'로 되돌림."""
+    from domains.branch_app.testmode import today_str, is_test_flag
+    if not ym:
+        ym = today_str()[:7]
+    _set_class_status(gx_product_id, ym, "waiting", decided_by=decided_by, is_test=is_test_flag())
+    return {"ok": True, "status": "waiting", "ym": ym}
+
+
+def gx_class_board(branch: str, ym: str = "") -> list[dict]:
+    """지점 GX 반별 상태판 — 월별 정원/대기/진행 + 미달 경고."""
+    from domains.branch_app.testmode import today_str
+    if not ym:
+        ym = today_str()[:7]
+    conn = get_conn()
+    prods = _rows_local(conn.execute(
+        "SELECT id, name, instructor_name, min_headcount, max_headcount, capacity "
+        "FROM products WHERE branch=? AND category='gx' AND is_active=1 ORDER BY name", (branch,)))
+    conn.close()
+    out = []
+    for p in prods:
+        hc = gx_headcounts(p["id"], ym)
+        out.append({
+            "id": p["id"], "name": p["name"], "instructor_name": p.get("instructor_name", ""),
+            "ym": ym, "enrolled": hc["enrolled"], "waiting": hc["waiting"],
+            "min": hc["min"], "max": hc["max"], "status": hc["status"], "full": hc["full"],
+            "short": (hc["min"] > 0 and hc["status"] != "running" and hc["enrolled"] < hc["min"]),
+        })
+    return out
+
+
+def _rows_local(cur):
+    cols = [d[0] for d in cur.description]
+    return [dict(zip(cols, r)) for r in cur.fetchall()]
 
 
 def gx_check_and_open(base_url: str, gx_product_id: int) -> dict:

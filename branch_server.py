@@ -2241,6 +2241,37 @@ async def api_gx_check_open(request: Request, gx_product_id: int):
     return gx_check_and_open(_base_url(request), gx_product_id)
 
 
+@app.get("/api/gx/class-board")
+async def api_gx_class_board(request: Request, ym: str = ""):
+    """지점 GX 반별 상태판(월별 정원/대기/진행/미달) — 인포·GX·매니저."""
+    user = require_role(request, "info", "gx", "manager")
+    from domains.branch_app.pay_sms import gx_class_board
+    return gx_class_board(user.get("branch", ""), ym)
+
+
+class ClassStatusBody(BaseModel):
+    gx_product_id: int
+    ym:            str = ""
+    notify:        bool = True
+
+
+@app.post("/api/gx/class-run")
+async def api_gx_class_run(request: Request, body: ClassStatusBody):
+    """반을 '진행'으로 확정(미달이어도 강행) + 신청자에게 결제안내 — 매니저·관리자."""
+    user = require_role(request, "manager")
+    from domains.branch_app.pay_sms import gx_set_class_running
+    return gx_set_class_running(_base_url(request), body.gx_product_id, body.ym,
+                                decided_by=user.get("name", ""), notify=body.notify)
+
+
+@app.post("/api/gx/class-wait")
+async def api_gx_class_wait(request: Request, body: ClassStatusBody):
+    """반을 '대기'로 되돌림 — 매니저·관리자."""
+    user = require_role(request, "manager")
+    from domains.branch_app.pay_sms import gx_set_class_waiting
+    return gx_set_class_waiting(body.gx_product_id, body.ym, decided_by=user.get("name", ""))
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  환불 처리 (토스 취소 연동 / 수기) — 매니저·관리자
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2363,6 +2394,38 @@ async def api_sms_reregister(request: Request, body: ReRegBody):
     if not targets:
         raise HTTPException(status_code=400, detail="수강 회원(전화번호 보유)이 없습니다")
     res = broadcast(targets, body.message, sent_by=user.get("name", ""))
+    return res
+
+
+class ReRegLinkBody(BaseModel):
+    gx_product_id: int
+    force:         bool = False   # 재등록 기간(20~23일) 밖에서도 강행(관리자)
+
+
+@app.post("/api/sms/reregister-links")
+async def api_sms_reregister_links(request: Request, body: ReRegLinkBody):
+    """기존 수강 회원에게 '다음 달분' 결제 링크 개별 발송 — 인포·GX강사·매니저·관리자.
+    재등록 기간(하드코딩 20~23일)에만 발송. 관리자는 force로 예외."""
+    user = require_role(request, "info", "gx", "manager")
+    from domains.branch_app.pay_sms import send_reregister_links, gx_visible_yms
+    # GX강사는 자기 수업만
+    if "gx" in user_roles(user) and not user.get("admin") and \
+       not set(user_roles(user)).intersection({"info", "manager"}):
+        conn = get_conn()
+        owner = conn.execute("SELECT instructor_employee_id FROM products WHERE id=?",
+                             (body.gx_product_id,)).fetchone()
+        conn.close()
+        if not owner or owner[0] != int(user.get("sub") or 0):
+            raise HTTPException(status_code=403, detail="본인 담당 수업만 발송할 수 있습니다")
+    vis = gx_visible_yms()
+    if not vis["rereg_period"] and not (body.force and user.get("admin")):
+        raise HTTPException(status_code=400,
+            detail=f"재등록 안내 기간(매월 20~23일)에만 발송할 수 있습니다 (오늘 {vis['day']}일)")
+    res = send_reregister_links(base_url=_base_url(request),
+                                gx_product_id=body.gx_product_id,
+                                sent_by=user.get("name", ""))
+    if not res.get("ok"):
+        raise HTTPException(status_code=400, detail=res.get("error", "발송 실패"))
     return res
 
 
