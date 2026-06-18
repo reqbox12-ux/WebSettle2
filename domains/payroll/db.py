@@ -89,15 +89,20 @@ def _migrate_roles_and_person(conn):
 
     conn.commit()
 
-    # person_uid 백필: 주민번호(id_number) 있으면 그걸 키로, 없으면 'EMP{id}' 단독키
-    rows = conn.execute(
-        "SELECT id, id_number, person_uid FROM employees"
-    ).fetchall()
+    # 주민번호 암호화 마이그레이션 + person_uid = 주민번호 blind index 재계산
+    from shared.crypto import encrypt as _enc, blind_index as _bidx, is_encrypted as _isenc
+    rows = conn.execute("SELECT id, id_number, person_uid FROM employees").fetchall()
     for eid, idnum, puid in rows:
-        if puid:
-            continue
-        key = (idnum or "").strip() or f"EMP{eid}"
-        conn.execute("UPDATE employees SET person_uid=? WHERE id=?", (key, eid))
+        plain = (idnum or "").strip()
+        # 평문 주민번호면 암호화
+        if plain and not _isenc(plain):
+            conn.execute("UPDATE employees SET id_number=? WHERE id=?", (_enc(plain), eid))
+        # person_uid 보정: 평문주민번호 있으면 blind index로(같은 사람 묶음 유지), 없으면 EMP{id}
+        new_puid = _bidx(plain) if (plain and not _isenc(plain)) else puid
+        if not new_puid:
+            new_puid = f"EMP{eid}"
+        if new_puid != puid:
+            conn.execute("UPDATE employees SET person_uid=? WHERE id=?", (new_puid, eid))
     conn.commit()
 
 
@@ -377,6 +382,7 @@ def init_payroll_tables():
 
 # ── 직원 마스터 쿼리 ─────────────────────────────────────────
 def get_all_employees(active_only: bool = True) -> list[dict]:
+    from shared.crypto import decrypt as _dec
     conn = get_conn()
     q = "SELECT * FROM employees"
     if active_only:
@@ -386,7 +392,11 @@ def get_all_employees(active_only: bool = True) -> list[dict]:
     cols = [d[0] for d in cur.description]
     rows = cur.fetchall()
     conn.close()
-    return [dict(zip(cols, r)) for r in rows]
+    out = [dict(zip(cols, r)) for r in rows]
+    for e in out:                       # 민감컬럼 복호화
+        if "id_number" in e:
+            e["id_number"] = _dec(e["id_number"])
+    return out
 
 
 def get_employees_by_branch(branch: str, active_only: bool = True) -> list[dict]:
@@ -507,10 +517,15 @@ def upsert_employee(data: dict) -> int:
     name   = data["name"]
     branch = data["branch"]
 
+    # 주민번호 암호화 저장 (person_uid 계산용 평문은 별도 보관)
+    from shared.crypto import encrypt as _enc, blind_index as _bidx
+    _idnum_plain = (data.get("id_number", "") or "").strip()
+    _idnum_stored = _enc(_idnum_plain) if _idnum_plain else ""
+
     params_vals = (
         name, branch, data["emp_type"], data.get("dependents", 1),
         data.get("base_salary", 0), data.get("meal_allowance", 0), data.get("transport", 0),
-        data.get("email", ""), data.get("id_number", ""), data.get("join_date", ""),
+        data.get("email", ""), _idnum_stored, data.get("join_date", ""),
         data.get("is_active", 1), data.get("note", ""),
         data.get("phone", ""), data.get("work_start", "09:00"),
         data.get("work_end", "18:00"), data.get("hourly_rate", 0),
@@ -569,17 +584,15 @@ def upsert_employee(data: dict) -> int:
         except Exception:
             pass
 
-    # person_uid 채우기: 주민번호 우선, 없으면 단독키 'EMP{id}'
-    idnum = (data.get("id_number", "") or "").strip()
-    desired_puid = idnum or f"EMP{emp_id}"
+    # person_uid 채우기: 주민번호 blind index(같은 사람 묶기), 없으면 단독키 'EMP{id}'
+    puid_from_id = _bidx(_idnum_plain) if _idnum_plain else ""
     cur_puid = conn.execute(
         "SELECT person_uid FROM employees WHERE id=?", (emp_id,)
     ).fetchone()
-    # 주민번호가 입력되면 항상 그것으로 동기화(같은 사람 묶기), 없을 때만 기존/단독키 유지
-    if idnum:
-        conn.execute("UPDATE employees SET person_uid=? WHERE id=?", (idnum, emp_id))
+    if puid_from_id:
+        conn.execute("UPDATE employees SET person_uid=? WHERE id=?", (puid_from_id, emp_id))
     elif not (cur_puid and cur_puid[0]):
-        conn.execute("UPDATE employees SET person_uid=? WHERE id=?", (desired_puid, emp_id))
+        conn.execute("UPDATE employees SET person_uid=? WHERE id=?", (f"EMP{emp_id}", emp_id))
 
     conn.commit()
     conn.close()
