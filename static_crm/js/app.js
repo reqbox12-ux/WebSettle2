@@ -60,6 +60,16 @@
     return fetch(window.API_BASE + path, { method, headers, body: formData });
   }
 
+  // ── 가격 표기 규칙: 10원 반올림 후 100원 절사 ─────────────────
+  function roundPrice(amount){ const r10 = Math.floor((Number(amount)||0)/10 + 0.5)*10; return Math.floor(r10/100)*100; }
+  // VAT 포함가 → 결제수단별 표기액 (현금/계좌이체만 VAT 제외)
+  function priceByMethod(base, pm){
+    base = Number(base)||0;
+    if (pm==='현금' || pm==='계좌이체') return roundPrice(base/1.1);
+    return roundPrice(base);
+  }
+  window.roundPrice = roundPrice; window.priceByMethod = priceByMethod;
+
   // ── Router ────────────────────────────────────────────────────
   // allowedRoles: 비어있으면 전원. staffOnly: 회원(member) 차단.
   // (직무: info 인포 / trainer 트레이너 / golf_pro 골프프로 / gx GX강사 / manager 지점관리자)
@@ -2362,6 +2372,20 @@
     // 상품 선택 시: 금액 자동 + 허용 결제수단만 노출
     const ALL_PM = [['카드','💳 카드'],['현금','💵 현금'],['계좌이체','🏦 계좌이체(안내문자)'],
                     ['토스','📲 토스(결제링크)'],['관리비청구','🏢 관리비 청구']];
+    // 현재 선택 상품의 기본가(VAT 포함) + 선택 결제수단 → 금액 자동 표기
+    function curProductBase() {
+      const sel = document.getElementById('modal-product');
+      if (!sel) return 0;
+      const idx = prodOpts.indexOf(sel.value);
+      return idx >= 0 ? (products[idx].price || 0) : 0;
+    }
+    function curPayMethod() {
+      return document.querySelector('input[name="pay_method"]:checked')?.value || '카드';
+    }
+    function recalcAmount() {
+      const amtEl = document.getElementById('modal-amount');
+      if (amtEl) amtEl.value = priceByMethod(curProductBase(), curPayMethod());
+    }
     function applyProductPM(idx) {
       const grp = document.querySelector('.radio-group input[name="pay_method"]')?.closest('.radio-group');
       if (!grp) return;
@@ -2376,18 +2400,18 @@
       grp.querySelectorAll('.radio-btn').forEach(btn=>btn.addEventListener('click',()=>{
         grp.querySelectorAll('.radio-btn').forEach(b=>b.classList.remove('selected'));
         btn.querySelector('input').checked=true; btn.classList.add('selected');
+        recalcAmount();   // 결제수단 바뀌면 금액(부가세) 재계산
       }));
     }
     setTimeout(() => {
       const sel = document.getElementById('modal-product');
       if (sel && sel.tagName === 'SELECT') {
         sel.addEventListener('change', () => {
-          const idx = prodOpts.indexOf(sel.value);
-          const amtEl = document.getElementById('modal-amount');
-          if (idx >= 0 && amtEl) amtEl.value = products[idx].price || 0;
-          applyProductPM(idx);
+          applyProductPM(prodOpts.indexOf(sel.value));
+          recalcAmount();
         });
         applyProductPM(prodOpts.indexOf(sel.value));  // 초기 1회
+        recalcAmount();
       }
     }, 200);
   };
@@ -2759,9 +2783,9 @@
         : (p.category==='lesson' ? `<div style="font-size:12px;color:var(--muted)">${p.lesson_type||''} · ${p.sessions||0}회</div>` : '');
 
       if (p.category==='gx' && Array.isArray(p.offers) && p.offers.length) {
-        // 당월/다음달 오퍼별 카드
+        // 당월/다음달 오퍼별 카드. o.charge = VAT 포함가(이미 10원반올림·100원절사 처리됨)
         p.offers.forEach(o => {
-          const vat = Math.round((o.charge||0)*1.1);
+          const vat = o.charge||0;
           const full = o.full;
           const waitMode = (o.min>0 && o.status!=='running' && (o.enrolled+o.waiting) < o.min);
           let badge = '';
@@ -2782,7 +2806,8 @@
           </div>`);
         });
       } else {
-        const base = p.price||0, vat = Math.round(base*1.1);
+        // 입력가는 VAT 포함가. 셀프구매는 토스(카드)이므로 그대로 표기.
+        const vat = roundPrice(p.price||0);
         cards.push(`<div class="card" style="padding:18px 20px">
           <div style="font-size:15px;font-weight:800;margin-bottom:6px">${p.name}</div>
           ${meta}

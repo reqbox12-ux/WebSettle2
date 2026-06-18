@@ -128,10 +128,14 @@ def gx_price(product: dict, target_ym: str, ref_dt=None) -> dict:
     if pass_type == "period":
         # 기간권: 미래월·1일등록=정가, 당월 중도=일할(정가÷총회차×남은회차)
         denom = total or 1
-        charge = full_price if (not is_current or remaining >= total) else round(full_price / denom * remaining)
+        charge = full_price if (not is_current or remaining >= total) else (full_price / denom * remaining)
     else:
         # 횟수권: 진행/남은 회차 × 단가
-        charge = round(remaining * unit)
+        charge = remaining * unit
+
+    # 입력 금액은 VAT 포함가. 10원 반올림 후 100원 절사로 표기.
+    from domains.branch_app.crm_ext import round_price
+    charge = round_price(charge)
 
     return {"charge": charge, "unit": unit, "total": total, "remaining": remaining,
             "dates": dates, "pass_type": pass_type, "is_current": is_current,

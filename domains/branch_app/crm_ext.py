@@ -387,12 +387,24 @@ def init_crm_ext_tables():
 
 
 # ── Phase 3: 결제수단/VAT 헬퍼 ───────────────────────────────
+def round_price(amount) -> int:
+    """가격 표기 규칙: 10원 단위 반올림 후 100원 단위 절사.
+    예) 9,625 → (10원반올림) 9,630 → (100원절사) 9,600"""
+    amt = float(amount or 0)
+    r10 = int(amt / 10 + 0.5) * 10   # 10원 단위 반올림
+    return (r10 // 100) * 100          # 100원 단위 절사(버림)
+
+
 def charge_amount(base_amount: int, pay_method: str) -> int:
-    """회원 청구액 — 카드결제만 VAT(10%) 가산. 정산기준은 항상 base_amount."""
+    """회원 청구액. 입력 금액(base_amount)은 'VAT 포함가'로 간주.
+    - 현금/계좌이체: VAT 제외(÷1.1)한 금액으로 청구
+    - 카드/토스/관리비청구: 입력 금액 그대로(VAT 포함)
+    최종 금액은 10원 반올림 후 100원 절사."""
     base = int(base_amount or 0)
-    if (pay_method or "").strip() in ("카드", "card"):
-        return round(base * 1.1)
-    return base
+    pm = (pay_method or "").strip()
+    if pm in ("현금", "cash", "계좌이체", "이체", "계좌", "무통장", "transfer"):
+        return round_price(base / 1.1)
+    return round_price(base)
 
 
 # ── Phase 3: GX 구간제 룰 ────────────────────────────────────
