@@ -58,6 +58,15 @@ def init_crm_ext_tables():
     # GX 가변요금 적용 토글
     if "prorate" not in pcols:
         conn.execute("ALTER TABLE products ADD COLUMN prorate INTEGER DEFAULT 0")
+    # 상품별 허용 결제수단 (쉼표구분, 빈값=전체 허용)
+    if "pay_methods" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pay_methods TEXT DEFAULT ''")
+
+    # 직원 고용형태: 트레이너/프로의 출퇴근형(정규) vs 프리랜서형
+    ecols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
+    if ecols and "work_type" not in ecols:
+        # 'commute'(출퇴근/기본급+수업료) | 'freelance'(수업료만)
+        conn.execute("ALTER TABLE employees ADD COLUMN work_type TEXT DEFAULT 'commute'")
 
     # 재고 임계치 (Phase 6 자동알림)
     icols = [r[1] for r in conn.execute("PRAGMA table_info(inventory_items)").fetchall()]
@@ -272,6 +281,46 @@ def init_crm_ext_tables():
             status        TEXT DEFAULT 'waiting',        -- waiting|notified|converted|canceled
             created_at    TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(gx_product_id, member_id)
+        );
+
+        -- ── 감사 로그 (누가 무엇을 바꿨나) ──────────────────────
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts         TEXT DEFAULT (datetime('now','localtime')),
+            actor      TEXT DEFAULT '',                  -- 행위자 이름/계정
+            actor_role TEXT DEFAULT '',
+            branch     TEXT DEFAULT '',
+            action     TEXT NOT NULL,                    -- 'sale.create','sale.refund','payroll.confirm' 등
+            target     TEXT DEFAULT '',                  -- 대상(회원/상품/직원명 등)
+            detail     TEXT DEFAULT ''
+        );
+
+        -- ── 월 마감(락) ─────────────────────────────────────────
+        CREATE TABLE IF NOT EXISTS month_locks (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            year       INTEGER NOT NULL,
+            month      INTEGER NOT NULL,
+            branch     TEXT DEFAULT '',                  -- 빈값=전사
+            locked_by  TEXT DEFAULT '',
+            locked_at  TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(year, month, branch)
+        );
+
+        -- ── 환불 기록 ───────────────────────────────────────────
+        CREATE TABLE IF NOT EXISTS refunds (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            sale_id       INTEGER DEFAULT 0,
+            branch        TEXT DEFAULT '',
+            member_id     INTEGER DEFAULT 0,
+            member_name   TEXT DEFAULT '',
+            product_name  TEXT DEFAULT '',
+            paid_amount   INTEGER DEFAULT 0,
+            refund_amount INTEGER DEFAULT 0,
+            reason        TEXT DEFAULT '',
+            method        TEXT DEFAULT '',               -- 'toss'|'manual'
+            toss_result   TEXT DEFAULT '',
+            refunded_by   TEXT DEFAULT '',
+            created_at    TEXT DEFAULT (datetime('now','localtime'))
         );
     """)
     conn.commit()

@@ -209,6 +209,8 @@
         if (f.type === 'radio') {
           const checked = modal.querySelector(`input[name="${f.id}"]:checked`);
           data[f.id] = checked ? checked.value : (f.options[0]?.value || f.options[0]);
+        } else if (f.type === 'checks') {
+          data[f.id] = [...modal.querySelectorAll(`.chk-${f.id}:checked`)].map(c => c.value);
         } else if (f.type === 'file') {
           const inp = modal.querySelector(`#modal-${f.id}`);
           data[f.id] = inp?.files[0] || null;
@@ -265,6 +267,17 @@
         const checked = (f.default ? val === f.default : idx === 0) ? 'checked' : '';
         const sel    = (f.default ? val === f.default : idx === 0) ? 'selected' : '';
         return `<label class="radio-btn ${sel}"><input type="radio" name="${f.id}" value="${val}" ${checked}>${lbl}</label>`;
+      }).join('');
+      inner = `<div class="radio-group">${btns}</div>`;
+    } else if (f.type === 'checks') {
+      const def = f.default || [];
+      const btns = f.options.map(o => {
+        const val = typeof o === 'object' ? o.value : o;
+        const lbl = typeof o === 'object' ? o.label : o;
+        const on = def.includes(val);
+        return `<label class="radio-btn ${on?'selected':''}" style="cursor:pointer">
+          <input type="checkbox" class="chk-${f.id}" value="${val}" ${on?'checked':''}
+          onchange="this.closest('.radio-btn').classList.toggle('selected',this.checked)">${lbl}</label>`;
       }).join('');
       inner = `<div class="radio-group">${btns}</div>`;
     } else if (f.type === 'file') {
@@ -1987,13 +2000,15 @@
           { id:'prorate', label:'가변 요금 (중도등록 일할계산)', type:'radio', options:[
             { value:'0', label:'고정 금액' }, { value:'1', label:'가변(남은 회차만 청구)' },
           ], hint:'가변: 이번 달 남은 수업 회차 × 회당 단가로 자동 계산 (공휴일 제외)' },
+          PAY_METHODS_FIELD(),
         ],
         submitLabel: 'GX 등록',
         onSubmit: async (data) => submitProduct({ ...data, category:'gx',
           price: parseInt(data.price)||0, capacity: parseInt(data.capacity)||20,
           min_headcount: parseInt(data.min_headcount)||0, max_headcount: parseInt(data.max_headcount)||0,
           pass_type: data.pass_type||'count', pass_count: parseInt(data.pass_count)||0,
-          pass_days: parseInt(data.pass_days)||30, prorate: parseInt(data.prorate)||0 }),
+          pass_days: parseInt(data.pass_days)||30, prorate: parseInt(data.prorate)||0,
+          pay_methods: (data.pay_methods||[]).join(',') }),
       });
     } else if (category === 'lesson') {
       createModal({
@@ -2006,10 +2021,12 @@
           { id:'name',     label:'상품명', type:'text', required:true, placeholder:'예: PT 10회권 / 골프 주2회 레슨' },
           { id:'sessions', label:'횟수 (회)', type:'number', default:'10', min:1, row:'ps' },
           { id:'price',    label:'금액 (원)', type:'number', default:'0',  min:0, row:'ps' },
+          PAY_METHODS_FIELD(),
         ],
         submitLabel: '레슨 등록',
         onSubmit: async (data) => submitProduct({ ...data, category:'lesson',
-          price: parseInt(data.price)||0, sessions: parseInt(data.sessions)||0 }),
+          price: parseInt(data.price)||0, sessions: parseInt(data.sessions)||0,
+          pay_methods: (data.pay_methods||[]).join(',') }),
       });
     } else {
       createModal({
@@ -2017,12 +2034,23 @@
         fields: [
           { id:'name',  label:'상품명',   type:'text', required:true, placeholder:'예: 아메리카노 / 운동타올' },
           { id:'price', label:'가격 (원)', type:'number', default:'0', min:0 },
+          PAY_METHODS_FIELD(),
         ],
         submitLabel: '상품 등록',
         onSubmit: async (data) => submitProduct({ ...data, category:'goods',
-          price: parseInt(data.price)||0 }),
+          price: parseInt(data.price)||0, pay_methods: (data.pay_methods||[]).join(',') }),
       });
     }
+  }
+
+  // 상품 폼 공통: 허용 결제수단 (체크 안 하면 전체 허용)
+  function PAY_METHODS_FIELD() {
+    return { id:'pay_methods', label:'허용 결제수단 (체크 안 하면 전체 허용)', type:'checks',
+      default:[], options:[
+        { value:'카드', label:'💳 카드' }, { value:'현금', label:'💵 현금' },
+        { value:'계좌이체', label:'🏦 계좌이체' }, { value:'관리비청구', label:'🏢 관리비청구' },
+        { value:'토스', label:'📲 토스' },
+      ]};
   }
 
   async function submitProduct(data) {
@@ -2147,7 +2175,25 @@
       }
     });
 
-    // 상품 선택 시 금액 자동 입력
+    // 상품 선택 시: 금액 자동 + 허용 결제수단만 노출
+    const ALL_PM = [['카드','💳 카드'],['현금','💵 현금'],['계좌이체','🏦 계좌이체(안내문자)'],
+                    ['토스','📲 토스(결제링크)'],['관리비청구','🏢 관리비 청구']];
+    function applyProductPM(idx) {
+      const grp = document.querySelector('.radio-group input[name="pay_method"]')?.closest('.radio-group');
+      if (!grp) return;
+      let allowed = null;
+      if (idx >= 0 && products[idx].pay_methods) {
+        allowed = products[idx].pay_methods.split(',').map(s=>s.trim()).filter(Boolean);
+      }
+      const list = ALL_PM.filter(([v]) => !allowed || allowed.includes(v));
+      const show = list.length ? list : ALL_PM;   // 설정이 비면 전체
+      grp.innerHTML = show.map(([v,l],i)=>`<label class="radio-btn ${i===0?'selected':''}">
+        <input type="radio" name="pay_method" value="${v}" ${i===0?'checked':''}>${l}</label>`).join('');
+      grp.querySelectorAll('.radio-btn').forEach(btn=>btn.addEventListener('click',()=>{
+        grp.querySelectorAll('.radio-btn').forEach(b=>b.classList.remove('selected'));
+        btn.querySelector('input').checked=true; btn.classList.add('selected');
+      }));
+    }
     setTimeout(() => {
       const sel = document.getElementById('modal-product');
       if (sel && sel.tagName === 'SELECT') {
@@ -2155,7 +2201,9 @@
           const idx = prodOpts.indexOf(sel.value);
           const amtEl = document.getElementById('modal-amount');
           if (idx >= 0 && amtEl) amtEl.value = products[idx].price || 0;
+          applyProductPM(idx);
         });
+        applyProductPM(prodOpts.indexOf(sel.value));  // 초기 1회
       }
     }, 200);
   };

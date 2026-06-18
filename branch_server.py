@@ -1375,6 +1375,7 @@ class ProductBody(BaseModel):
     pass_count:      int = 0
     pass_days:       int = 30
     prorate:         int = 0         # GX 가변요금 토글
+    pay_methods:     str = ""        # 허용 결제수단(쉼표). 빈값=전체
 
 
 @app.post("/api/products")
