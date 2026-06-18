@@ -34,15 +34,24 @@ def _digits(s: str) -> str:
 _WEEKDAY_MAP = {"월": 0, "화": 1, "수": 2, "목": 3, "금": 4, "토": 5, "일": 6}
 
 
-def _parse_weekdays(days: str) -> set:
-    s = days or ""
+def _parse_weekdays(product: dict) -> set:
+    """상품의 운영요일 → weekday 집합(월0..일6). weekday_bits 우선, 없으면 days 자연어."""
+    bits = (product.get("weekday_bits") or "").strip()
+    if bits:
+        out = set()
+        for x in bits.split(","):
+            x = x.strip()
+            if x.isdigit():
+                out.add(int(x))
+        return out
+    s = product.get("days", "") or ""
     if "매일" in s:
         return set(range(7))
     return {_WEEKDAY_MAP[ch] for ch in s if ch in _WEEKDAY_MAP}
 
 
 def _gx_session_dates(year: int, month: int, weekdays: set) -> list:
-    """해당 월의 수업 날짜 (요일 매칭, 공휴일 제외)."""
+    """해당 월의 수업 후보 날짜 (요일 매칭, 공휴일 제외)."""
     import calendar
     from datetime import date
     conn = get_conn()
@@ -57,33 +66,86 @@ def _gx_session_dates(year: int, month: int, weekdays: set) -> list:
     return out
 
 
-def gx_current_price(product: dict, ref_dt=None) -> dict:
-    """GX 상품의 현재 청구가. prorate=1이면 남은 회차만큼 일할 계산.
-    오늘이 수업일이고 수업 시작 전이면 오늘 회차 포함."""
+def _confirmed_session_dates(gx_product_id: int, ym: str) -> list:
+    """강사가 확정한 수업일(있으면 우선). 없으면 빈 리스트."""
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT session_date FROM gx_sessions WHERE gx_product_id=? AND ym=? AND confirmed=1 ORDER BY session_date",
+        (gx_product_id, ym)).fetchall()
+    conn.close()
+    return [r[0] for r in rows]
+
+
+def gx_price(product: dict, target_ym: str, ref_dt=None) -> dict:
+    """GX 청구가 계산.
+    - target_ym = 'YYYY-MM'. 현재(오버라이드) 날짜의 월이면 '당월'(일할), 미래월이면 '풀'.
+    - 1회단가(unit_price) 있으면 그것을, 없으면 정가÷총회차.
+    - 강사 확정 수업일이 있으면 그 날짜 사용, 없으면 요일 자동 계산.
+    - 횟수상한(pass_count, 횟수권만) 캡 적용.
+    반환: charge / unit / total / remaining / dates
+    """
     from datetime import datetime
-    full = int(product.get("price", 0) or 0)
-    if not product.get("prorate"):
-        return {"prorate": False, "full": full, "charge": full,
-                "total": 0, "remaining": 0, "per_session": 0}
-    now = ref_dt or datetime.now()
-    weekdays = _parse_weekdays(product.get("days", ""))
-    dates = _gx_session_dates(now.year, now.month, weekdays)
-    # 가변요금은 '이번 달 실제 수업일 수'를 기준 (공휴일 제외) — 청구가 정가 초과 방지
-    total = len(dates) or 1
-    per = round(full / total) if total else full
+    from domains.branch_app.testmode import today_dt
+    now = ref_dt or today_dt()
     today = now.date().isoformat()
+    y, m = int(target_ym[:4]), int(target_ym[5:7])
+
+    weekdays = _parse_weekdays(product)
+    conf = _confirmed_session_dates(product["id"], target_ym)
+    dates = conf if conf else _gx_session_dates(y, m, weekdays)
+
+    # 횟수권 상한 캡
+    cap = int(product.get("pass_count") or 0)
+    pass_type = product.get("pass_type", "count")
+    full_price = int(product.get("price", 0) or 0)
+    unit = int(product.get("unit_price") or 0)
+    if not unit:
+        # 단가 미설정: 정가 ÷ (상한 또는 총회차)
+        denom = cap or len(dates) or 1
+        unit = round(full_price / denom) if denom else full_price
+
+    # 이번 달(오버라이드 기준)이면 중도일할, 미래월이면 풀
+    is_current = (target_ym == today[:7])
     start_t = (product.get("start_time") or "00:00")[:5]
     cur_hm = now.strftime("%H:%M")
-    remaining = 0
-    for ds in dates:
-        if ds > today:
-            remaining += 1
-        elif ds == today and cur_hm < start_t:   # 오늘 수업 시작 전이면 포함
-            remaining += 1
-    charge = round(remaining * per) if remaining else 0
-    return {"prorate": True, "full": full, "charge": charge,
-            "total": total, "remaining": remaining, "per_session": per,
-            "session_dates": dates}
+
+    if is_current:
+        remaining = 0
+        for ds in dates:
+            if ds > today:
+                remaining += 1
+            elif ds == today and cur_hm < start_t:
+                remaining += 1
+    else:
+        remaining = len(dates)   # 미래월 = 풀
+
+    total = len(dates)
+    # 상한 캡: 청구 회차는 cap 초과 못함 (횟수권만; 기간권은 정액)
+    if pass_type == "count" and cap:
+        remaining = min(remaining, cap)
+        total = min(total, cap)
+
+    if pass_type == "period":
+        # 기간권: 미래월·1일등록=정가, 당월 중도=일할(정가÷총회차×남은회차)
+        denom = total or 1
+        charge = full_price if (not is_current or remaining >= total) else round(full_price / denom * remaining)
+    else:
+        # 횟수권: 진행/남은 회차 × 단가
+        charge = round(remaining * unit)
+
+    return {"charge": charge, "unit": unit, "total": total, "remaining": remaining,
+            "dates": dates, "pass_type": pass_type, "is_current": is_current,
+            "confirmed": bool(conf)}
+
+
+# 하위호환: 기존 호출부(gx_current_price)가 남아있을 수 있어 래핑
+def gx_current_price(product: dict, ref_dt=None) -> dict:
+    from domains.branch_app.testmode import today_str
+    ym = today_str()[:7]
+    r = gx_price(product, ym, ref_dt)
+    return {"prorate": bool(product.get("prorate")), "full": int(product.get("price", 0) or 0),
+            "charge": r["charge"], "total": r["total"], "remaining": r["remaining"],
+            "per_session": r["unit"], "session_dates": r["dates"]}
 
 
 # ── 문자 템플릿 ───────────────────────────────────────────────
@@ -180,19 +242,23 @@ def send_sms(receiver: str, msg: str, title: str = "", name: str = "",
 # ── 주문 생성 (토스 링크 / 셀프구매) ──────────────────────────
 def create_order(*, branch, member_id, member_name, member_phone, product_id,
                  product_name, category, base_amount, amount, pay_method,
-                 instructor_employee_id=0, channel="link", created_by="") -> dict:
+                 instructor_employee_id=0, channel="link", created_by="",
+                 target_ym="") -> dict:
+    from domains.branch_app.testmode import is_test_flag, today_str
     token    = secrets.token_urlsafe(8)
     order_id = f"ord_{int(time.time())}_{secrets.token_hex(3)}"
+    if not target_ym:
+        target_ym = today_str()[:7]
     conn = get_conn()
     cur = conn.execute("""
         INSERT INTO payment_orders
         (token, order_id, branch, member_id, member_name, member_phone, product_id,
          product_name, category, base_amount, amount, pay_method,
-         instructor_employee_id, channel, created_by)
-        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+         instructor_employee_id, channel, created_by, target_ym, is_test)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
     """, (token, order_id, branch, member_id, member_name, _digits(member_phone),
           product_id, product_name, category, base_amount, amount, pay_method,
-          instructor_employee_id, channel, created_by))
+          instructor_employee_id, channel, created_by, target_ym, is_test_flag()))
     conn.commit()
     oid = cur.lastrowid
     conn.close()
@@ -230,6 +296,8 @@ def confirm_order(order_id: str, payment_key: str, amount: int) -> dict:
         err = res.get("message") or res.get("error") or "승인 실패"
         return {"ok": False, "error": err, "raw": res}
 
+    itest = int(order.get("is_test", 0) or 0)
+    tym   = order.get("target_ym", "") or ""
     # 매출 기록
     sale_id = create_sale({
         "branch": order["branch"], "member_id": order["member_id"],
@@ -237,6 +305,7 @@ def confirm_order(order_id: str, payment_key: str, amount: int) -> dict:
         "product_name": order["product_name"], "category": order["category"],
         "amount": order["amount"], "pay_method": order["pay_method"],
         "is_mgmt_fee": 0, "sold_by": order["created_by"] or "셀프결제",
+        "is_test": itest,
     })
 
     # 수강권 생성 (GX/레슨)
@@ -244,7 +313,7 @@ def confirm_order(order_id: str, payment_key: str, amount: int) -> dict:
     if product and product.get("category") == "gx":
         create_gx_enrollment(branch=order["branch"], gx_product_id=product["id"],
                              member_id=order["member_id"], member_name=order["member_name"],
-                             sale_id=sale_id)
+                             sale_id=sale_id, target_ym=tym, is_test=itest)
     elif product and product.get("category") == "lesson":
         product["price"] = order["base_amount"] or product.get("price", 0)
         product["_commission_percent"] = 0
@@ -326,36 +395,75 @@ def send_payment_link(*, base_url, order, member_name, member_phone, product_nam
 
 
 # ── GX 신청/개강 로직 ─────────────────────────────────────────
-def gx_apply(*, branch, gx_product_id, member_id, member_name, member_phone) -> dict:
+def gx_apply(*, branch, gx_product_id, member_id, member_name, member_phone, target_ym="") -> dict:
     """최소인원 미달 시 개강대기 신청 등록. 충족되면 caller가 결제 진행 가능."""
+    from domains.branch_app.testmode import is_test_flag, today_str
+    if not target_ym:
+        target_ym = today_str()[:7]
     conn = get_conn()
     try:
         conn.execute("""INSERT OR IGNORE INTO gx_applications
-            (branch, gx_product_id, member_id, member_name, member_phone)
-            VALUES (?,?,?,?,?)""",
-            (branch, gx_product_id, member_id, member_name, _digits(member_phone)))
+            (branch, gx_product_id, member_id, member_name, member_phone, target_ym, is_test)
+            VALUES (?,?,?,?,?,?,?)""",
+            (branch, gx_product_id, member_id, member_name, _digits(member_phone),
+             target_ym, is_test_flag()))
         conn.commit()
-        cnt = conn.execute("SELECT COUNT(*) FROM gx_applications WHERE gx_product_id=? AND status='waiting'",
-                           (gx_product_id,)).fetchone()[0]
+        cnt = conn.execute("SELECT COUNT(*) FROM gx_applications WHERE gx_product_id=? "
+                           "AND status='waiting' AND target_ym=?",
+                           (gx_product_id, target_ym)).fetchone()[0]
     finally:
         conn.close()
     return {"ok": True, "waiting": cnt}
 
 
-def gx_headcounts(gx_product_id: int) -> dict:
-    """현재 결제완료 수강(active) + 대기신청 수 + 상품 min/max"""
+def gx_headcounts(gx_product_id: int, target_ym: str = "", include_test: bool = None) -> dict:
+    """월별(target_ym) 결제완료 수강(active) + 대기신청 + 상품 min/max + 반 상태."""
+    from domains.branch_app.testmode import is_test_mode, today_str
+    if not target_ym:
+        target_ym = today_str()[:7]
+    if include_test is None:
+        include_test = is_test_mode()
+    test_filter = "" if include_test else " AND COALESCE(is_test,0)=0"
     conn = get_conn()
-    enrolled = conn.execute("SELECT COUNT(*) FROM gx_enrollments WHERE gx_product_id=? AND status='active'",
-                            (gx_product_id,)).fetchone()[0]
-    waiting  = conn.execute("SELECT COUNT(*) FROM gx_applications WHERE gx_product_id=? AND status='waiting'",
-                            (gx_product_id,)).fetchone()[0]
+    enrolled = conn.execute(
+        f"SELECT COUNT(*) FROM gx_enrollments WHERE gx_product_id=? AND status='active' "
+        f"AND target_ym=?{test_filter}", (gx_product_id, target_ym)).fetchone()[0]
+    waiting  = conn.execute(
+        f"SELECT COUNT(*) FROM gx_applications WHERE gx_product_id=? AND status='waiting' "
+        f"AND target_ym=?{test_filter}", (gx_product_id, target_ym)).fetchone()[0]
     p = _one(conn.execute("SELECT min_headcount, max_headcount, capacity FROM products WHERE id=?",
                           (gx_product_id,)))
+    st = _one(conn.execute("SELECT status FROM gx_class_status WHERE gx_product_id=? AND ym=?",
+                           (gx_product_id, target_ym)))
     conn.close()
     p = p or {}
     cap = p.get("max_headcount") or p.get("capacity") or 0
-    return {"enrolled": enrolled, "waiting": waiting,
-            "min": p.get("min_headcount") or 0, "max": cap}
+    mn = p.get("min_headcount") or 0
+    status = (st or {}).get("status") or ("running" if (mn and enrolled >= mn) else ("waiting" if mn else "running"))
+    return {"enrolled": enrolled, "waiting": waiting, "ym": target_ym,
+            "min": mn, "max": cap, "status": status,
+            "full": bool(cap and enrolled >= cap)}
+
+
+# ── GX 노출 정책 (1~23일 당월만 / 24~말일 +다음달, 재등록 20~23) ──
+def gx_visible_yms() -> dict:
+    """오늘(오버라이드) 기준 shop에 보일 대상월 목록 + 재등록 기간 여부."""
+    from domains.branch_app.testmode import today_dt
+    now = today_dt()
+    cur_ym = now.strftime("%Y-%m")
+    ny, nm = (now.year + 1, 1) if now.month == 12 else (now.year, now.month + 1)
+    next_ym = f"{ny:04d}-{nm:02d}"
+    day = now.day
+    shop_yms = [cur_ym]
+    if day >= 24:
+        shop_yms.append(next_ym)
+    rereg = (20 <= day <= 23)   # 재등록 안내 기간
+    return {"current_ym": cur_ym, "next_ym": next_ym, "shop_yms": shop_yms,
+            "rereg_period": rereg, "day": day}
+
+
+def next_ym() -> str:
+    return gx_visible_yms()["next_ym"]
 
 
 def gx_check_and_open(base_url: str, gx_product_id: int) -> dict:

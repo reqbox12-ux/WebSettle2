@@ -786,13 +786,13 @@ def create_sale(data: dict) -> int:
     conn = get_conn()
     cur  = conn.execute("""
         INSERT INTO sales (branch, member_id, member_name, product_id, product_name,
-                           category, amount, pay_method, is_mgmt_fee, sold_by, sale_date)
-        VALUES (?,?,?,?,?,?,?,?,?,?,COALESCE(?, date('now','localtime')))
+                           category, amount, pay_method, is_mgmt_fee, sold_by, sale_date, is_test)
+        VALUES (?,?,?,?,?,?,?,?,?,?,COALESCE(?, date('now','localtime')),?)
     """, (data["branch"], data.get("member_id", 0), data.get("member_name", ""),
           data.get("product_id", 0), data["product_name"], data.get("category", ""),
           data.get("amount", 0), data.get("pay_method", "카드"),
           data.get("is_mgmt_fee", 0), data.get("sold_by", ""),
-          data.get("sale_date") or None))
+          data.get("sale_date") or None, data.get("is_test", 0)))
     conn.commit()
     rid = cur.lastrowid
     conn.close()

@@ -84,6 +84,10 @@ def init_crm_ext_tables():
     ocols = [r[1] for r in conn.execute("PRAGMA table_info(payment_orders)").fetchall()]
     if ocols and "target_ym" not in ocols:
         conn.execute("ALTER TABLE payment_orders ADD COLUMN target_ym TEXT DEFAULT ''")
+    # gx_applications 월별 대기신청 분리 (target_ym)
+    acols = [r[1] for r in conn.execute("PRAGMA table_info(gx_applications)").fetchall()]
+    if acols and "target_ym" not in acols:
+        conn.execute("ALTER TABLE gx_applications ADD COLUMN target_ym TEXT DEFAULT ''")
 
     # 직원 고용형태: 트레이너/프로의 출퇴근형(정규) vs 프리랜서형
     ecols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
@@ -610,12 +614,16 @@ def get_product(product_id: int) -> dict | None:
     return r
 
 
-def create_gx_enrollment(*, branch, gx_product_id, member_id, member_name, sale_id) -> int:
+def create_gx_enrollment(*, branch, gx_product_id, member_id, member_name, sale_id,
+                         target_ym="", is_test=0) -> int:
+    from domains.branch_app.testmode import today_str
+    if not target_ym:
+        target_ym = today_str()[:7]
     conn = get_conn()
     cur = conn.execute("""
-        INSERT INTO gx_enrollments (branch, gx_product_id, member_id, member_name, sale_id, status)
-        VALUES (?,?,?,?,?, 'active')
-    """, (branch, gx_product_id, member_id, member_name, sale_id))
+        INSERT INTO gx_enrollments (branch, gx_product_id, member_id, member_name, sale_id, status, target_ym, is_test)
+        VALUES (?,?,?,?,?, 'active', ?, ?)
+    """, (branch, gx_product_id, member_id, member_name, sale_id, target_ym, is_test))
     rid = cur.lastrowid
     conn.commit()
     conn.close()
