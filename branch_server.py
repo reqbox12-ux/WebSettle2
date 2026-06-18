@@ -2442,6 +2442,15 @@ async def api_gx_class_wait(request: Request, body: ClassStatusBody):
     return gx_set_class_waiting(body.gx_product_id, body.ym, decided_by=user.get("name", ""))
 
 
+@app.get("/api/gx/calendar")
+async def api_gx_calendar(request: Request, ym: str, branch: str = ""):
+    """회원 홈 달력 — 지점 진행중 GX수업 + 날짜별 수업. (회원·직원 공통)"""
+    user = require_auth(request)
+    br = _scope_branch(user, branch) or user.get("branch", "")
+    from domains.branch_app.pay_sms import branch_gx_calendar
+    return branch_gx_calendar(br, ym)
+
+
 @app.get("/api/gx/sessions")
 async def api_gx_sessions(request: Request, gx_product_id: int, ym: str):
     """강사 수업일 편집 캘린더 — GX강사(본인)·매니저·관리자."""

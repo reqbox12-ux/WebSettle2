@@ -90,6 +90,7 @@
     approvals:   { label: '결재함',   icon: 'inbox',      staffOnly: true,  allowedRoles: ['manager'] },
     settings:    { label: '설정',     icon: 'settings-2', staffOnly: true,  allowedRoles: ['manager'] },
     shop:        { label: '수업·상품 구매', icon: 'shopping-bag', staffOnly: false, allowedRoles: [], memberOnly: true },
+    mypage:      { label: '마이페이지', icon: 'user', staffOnly: false, allowedRoles: [], memberOnly: true },
   };
 
   // 현재 사용자가 접근 가능한 페이지인지
@@ -453,9 +454,8 @@
     const container = document.getElementById('page-content');
     if (!container) return;
     switch (page) {
-      case 'home':        await renderHome(container);
-                          if (user.role === 'member') await renderMemberLessons(container);
-                          break;
+      case 'home':        await renderHome(container);        break;
+      case 'mypage':      await renderMyPage(container);      break;
       case 'attendance':  await renderAttendance(container);  break;
       case 'operations':  await renderOperations(container);  break;
       case 'members':     await renderMembers(container);     break;
@@ -1142,30 +1142,29 @@
       const data = await resp.json();
       const { announcements = [], events = [], classes = [] } = data;
 
-      const marqueeText = announcements.length
-        ? announcements.map(a => a.title).join('    ·    ')
-        : '라온스포츠 포털에 오신 것을 환영합니다';
+      // 상단 띠: "환영합니다" 고정 + 공지 흐름
+      const marqueeText = '환영합니다'
+        + (announcements.length ? '    ·    ' + announcements.map(a => a.title).join('    ·    ') : '');
 
-      const ev = events[0];
-      const heroHTML = ev ? `
-        <div class="hero-main" style="${ev.image_path ? 'background-image:url('+ev.image_path+')' : 'background:#1a1410'}">
-          ${ev.eyebrow ? `<div class="eyebrow"><i data-lucide="zap" style="width:12px;height:12px"></i> ${ev.eyebrow}</div>` : ''}
-          <h2>${ev.title}</h2>
-          <p>${ev.sub || ev.content || ''}</p>
-          <button class="btn primary sm" onclick="openEvent(${ev.id})">자세히 보기 →</button>
-        </div>` : `
-        <div class="hero-main" style="background:#1a1410">
-          <h2>라온스포츠에 오신 것을 환영합니다</h2>
-          <p>최신 이벤트와 프로그램을 확인해 보세요.</p>
+      // 큰 박스 = 공지(레드, 축소). 우측 = 이벤트 1개
+      const notice = announcements[0];
+      const heroHTML = `
+        <div class="hero-main" style="background:linear-gradient(135deg,#E60028,#1a1410);min-height:240px">
+          <div class="eyebrow"><i data-lucide="megaphone" style="width:12px;height:12px"></i> 공지</div>
+          <h2>${notice ? notice.title : '라온스포츠에 오신 것을 환영합니다'}</h2>
+          <p>${notice ? (notice.content || '') : '공지사항을 등록하면 여기에 표시됩니다.'}</p>
         </div>`;
 
-      const sideEvs = events.slice(1, 3);
-      const sideHTML = sideEvs.map(ev => `
+      const ev = events[0];
+      const sideHTML = ev ? `
         <div class="hero-side-card" style="cursor:pointer" onclick="openEvent(${ev.id})">
-          <div class="deadline"><i data-lucide="calendar" style="width:12px;height:12px"></i> ${ev.ends_at || ''}</div>
+          <div class="deadline"><i data-lucide="zap" style="width:12px;height:12px"></i> ${ev.eyebrow || '이벤트'}</div>
           <h3>${ev.title}</h3>
-          <p class="muted" style="font-size:13px;margin-top:4px">${(ev.sub || ev.content || '').slice(0, 60)}</p>
-        </div>`).join('') || '<div class="hero-side-card"><p class="muted">진행중인 이벤트가 없습니다</p></div><div class="hero-side-card dark"><p>새 이벤트를 기대해 주세요</p></div>';
+          <p class="muted" style="font-size:13px;margin-top:4px">${(ev.content || '').slice(0, 70)}</p>
+          <p style="font-size:12px;color:#E60028;margin-top:6px">자세히 보기 →</p>
+        </div>
+        <div class="hero-side-card dark"><p>이벤트는 운영관리에서 등록·연결합니다</p></div>`
+        : '<div class="hero-side-card"><p class="muted">진행중인 이벤트가 없습니다</p></div><div class="hero-side-card dark"><p>새 이벤트를 기대해 주세요</p></div>';
 
       const classHTML = classes.map(c => `
         <div class="class-card">
@@ -1244,29 +1243,141 @@
 
   // ── 회원 단순 랜딩 ────────────────────────────────────────────
   async function renderMemberHome(container) {
-    const name = user.name || '회원';
+    container.innerHTML = '<div class="page"><div class="empty">로딩 중…</div></div>';
+    // 공지 + 이벤트
+    let anns = [], events = [];
+    try {
+      const r = await api('/api/home/data?branch=' + encodeURIComponent(user.branch || ''));
+      if (r && r.ok) { const d = await r.json(); anns = d.announcements || []; events = d.events || []; }
+    } catch (e) {}
+    const ev = events[0];   // 이벤트 1개만
+    const notice = anns[0]; // 대표 공지
+    // 상단 NOTICE 띠: "환영합니다" 고정 + 공지 흐름
+    const marquee = '환영합니다' + (anns.length ? '    ·    ' + anns.map(a => a.title).join('    ·    ') : '');
+
     container.innerHTML = `
       <div class="page">
-        <div style="background:linear-gradient(135deg,#E60028,#1a1410);color:#fff;
-          border-radius:20px;padding:32px 26px;margin-bottom:20px">
-          <div style="font-size:13px;opacity:.85">라온스포츠 · ${user.branch || ''}</div>
-          <div style="font-size:24px;font-weight:900;margin-top:6px">${name}님, 환영합니다 👋</div>
-          <div style="font-size:13.5px;opacity:.9;margin-top:8px">원하는 수업과 상품을 직접 골라 결제할 수 있어요.</div>
-        </div>
-        <div class="grid-3" style="margin-bottom:8px">
-          ${[['gx','GX 프로그램','activity'],['lesson','PT·골프 레슨','target'],['goods','상품','shopping-bag']].map(([k,l,ic])=>`
-            <div class="card" style="padding:22px 20px;text-align:center;cursor:pointer" onclick="goShop('${k}')">
-              <i data-lucide="${ic}" style="width:30px;height:30px;color:#E60028"></i>
-              <div style="font-size:15px;font-weight:800;margin-top:10px">${l}</div>
-              <div style="font-size:12px;color:var(--muted);margin-top:4px">바로 구매하기 →</div>
+        <div class="marquee"><div class="marquee-wrap"><div class="marquee-track">${marquee + '    ·    ' + marquee}</div></div></div>
+
+        ${notice ? `
+        <div style="background:linear-gradient(135deg,#E60028,#1a1410);color:#fff;border-radius:16px;
+          padding:18px 20px;margin:14px 0 12px">
+          <div style="font-size:12px;opacity:.85">📢 공지</div>
+          <div style="font-size:18px;font-weight:900;margin-top:4px">${notice.title}</div>
+          ${notice.content ? `<div style="font-size:13px;opacity:.9;margin-top:6px;line-height:1.6">${(notice.content||'').slice(0,120)}</div>` : ''}
+        </div>` : `
+        <div style="background:linear-gradient(135deg,#E60028,#1a1410);color:#fff;border-radius:16px;
+          padding:18px 20px;margin:14px 0 12px">
+          <div style="font-size:18px;font-weight:900">${user.name||'회원'}님, 환영합니다 👋</div>
+          <div style="font-size:13px;opacity:.9;margin-top:4px">원하는 수업과 상품을 직접 골라 결제하세요.</div>
+        </div>`}
+
+        ${ev ? `
+        <div class="event-strip" onclick="openEvent(${ev.id})"
+          style="${ev.image_path?`background-image:url('${ev.image_path}')`:'background:#1a1410'};">
+          <div class="event-strip-ov"></div>
+          <div class="event-strip-body">
+            ${ev.eyebrow?`<span class="badge red">${ev.eyebrow}</span>`:'<span class="badge red">이벤트</span>'}
+            <div style="font-size:17px;font-weight:800;margin-top:6px">${ev.title}</div>
+            <div style="font-size:12px;opacity:.85;margin-top:2px">자세히 보기 →</div>
+          </div>
+        </div>` : ''}
+
+        <div class="shop3" style="margin:12px 0">
+          ${[['gx','GX','activity'],['lesson','PT·레슨','target'],['goods','상품','shopping-bag']].map(([k,l,ic])=>`
+            <div class="shop3-card" onclick="goShop('${k}')">
+              <i data-lucide="${ic}"></i><div class="shop3-label">${l}</div>
             </div>`).join('')}
         </div>
-        <button class="btn primary" style="width:100%;height:52px;font-size:16px;margin-top:6px"
-          onclick="navigateTo('shop')"><i data-lucide="shopping-bag"></i> 전체 상품 보기</button>
-        <button class="btn" style="width:100%;height:46px;font-size:15px;margin-top:8px"
-          onclick="openMyCoupons()"><i data-lucide="ticket"></i> 내 쿠폰함</button>
+
+        <div class="card" style="padding:14px 14px">
+          <div class="card-head"><div class="card-title">수업 시간표</div></div>
+          <div id="home-cal"></div>
+          <div id="home-cal-list" style="margin-top:10px"></div>
+        </div>
+      </div>`;
+    if (window.lucide) lucide.createIcons();
+    renderHomeCalendar();
+  }
+
+  // ── 회원 홈 달력 (진행중 GX수업) ───────────────────────────────
+  let _calYm = null;
+  async function renderHomeCalendar(ymShift) {
+    const now = new Date();
+    if (!_calYm) _calYm = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    if (ymShift) {
+      let [y,m] = _calYm.split('-').map(Number); m += ymShift;
+      if (m<1){m=12;y--;} if (m>12){m=1;y++;}
+      _calYm = `${y}-${String(m).padStart(2,'0')}`;
+    }
+    const el = document.getElementById('home-cal');
+    if (!el) return;
+    const r = await api(`/api/gx/calendar?ym=${_calYm}&branch=${encodeURIComponent(user.branch||'')}`);
+    const data = r && r.ok ? await r.json() : { by_date:{}, dates:[] };
+    const [Y,M] = _calYm.split('-').map(Number);
+    const first = new Date(Y, M-1, 1).getDay();
+    const days = new Date(Y, M, 0).getDate();
+    const wk = ['일','월','화','수','목','금','토'];
+    let cells = '';
+    for (let i=0;i<first;i++) cells += '<div class="cal-cell empty"></div>';
+    for (let d=1; d<=days; d++) {
+      const ds = `${_calYm}-${String(d).padStart(2,'0')}`;
+      const has = (data.by_date[ds]||[]).length;
+      cells += `<div class="cal-cell${has?' has':''}" onclick="showCalDay('${ds}')">
+        <span>${d}</span>${has?`<i class="cal-dot"></i>`:''}</div>`;
+    }
+    window._calData = data;
+    el.innerHTML = `
+      <div class="cal-head">
+        <button class="cal-nav" onclick="renderHomeCalendar(-1)">‹</button>
+        <b>${Y}년 ${M}월</b>
+        <button class="cal-nav" onclick="renderHomeCalendar(1)">›</button>
+      </div>
+      <div class="cal-grid">${wk.map(w=>`<div class="cal-wk">${w}</div>`).join('')}${cells}</div>`;
+    document.getElementById('home-cal-list').innerHTML =
+      '<div style="font-size:12px;color:var(--muted);text-align:center;padding:8px">날짜를 선택하면 수업이 표시됩니다</div>';
+  }
+  window.renderHomeCalendar = renderHomeCalendar;
+  window.showCalDay = function (ds) {
+    const list = (window._calData?.by_date?.[ds]) || [];
+    const box = document.getElementById('home-cal-list');
+    if (!list.length) { box.innerHTML = `<div class="empty" style="padding:14px">${ds} 진행 수업이 없습니다</div>`; return; }
+    box.innerHTML = `<div style="font-weight:700;margin-bottom:6px">${ds.slice(5)} 수업</div>` +
+      list.map(c => `
+        <div class="cls-card" onclick="goShop('gx')">
+          <div style="flex:1">
+            <div style="font-weight:700">${c.name}</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">
+              ⏰ ${c.start_time||''}${c.end_time?('~'+c.end_time):''} · 👤 ${c.instructor_name||''}</div>
+          </div>
+          <div style="text-align:right">
+            <div style="font-size:13px;font-weight:700;color:#16a34a">${c.enrolled}/${c.capacity||'-'}명</div>
+            <div style="font-size:11px;color:#E60028">구매하기 →</div>
+          </div>
+        </div>`).join('');
+  };
+
+  // ── 마이페이지 (내 쿠폰함 + 내 수업) ──────────────────────────
+  async function renderMyPage(container) {
+    container.innerHTML = `
+      <div class="page">
+        <div class="card"><div class="card-head"><div class="card-title">🎟️ 내 쿠폰함</div></div>
+          <div id="mp-coupons"><div class="empty">로딩 중…</div></div></div>
         <div id="member-lessons-slot"></div>
       </div>`;
+    // 쿠폰함
+    const r = await api('/api/my/coupons');
+    const list = r && r.ok ? await r.json() : [];
+    document.getElementById('mp-coupons').innerHTML = list.length ? list.map(c => {
+      const disc = c.discount_type==='percent'?`${c.discount_value}%`:`${(c.discount_value||0).toLocaleString()}원`;
+      const st = c.status==='available'?'<span class="badge ok">사용가능</span>'
+        :c.status==='used'?'<span class="badge outline">사용완료</span>':'<span class="badge outline">만료</span>';
+      return `<div style="padding:10px 12px;border:1px solid rgba(128,128,128,.2);border-radius:12px;margin-bottom:8px;${c.status!=='available'?'opacity:.5':''}">
+        <div style="display:flex;justify-content:space-between"><b>${c.name}</b>${st}</div>
+        <div style="font-size:13px;margin-top:4px">${disc} 할인 · ${c.expires_at?('~'+c.expires_at):'기간 제한 없음'}</div></div>`;
+    }).join('') : '<div class="empty" style="padding:18px">보유한 쿠폰이 없습니다</div>';
+    // 내 수업 (PT/레슨 서명)
+    await renderMemberLessons(container);
     if (window.lucide) lucide.createIcons();
   }
 

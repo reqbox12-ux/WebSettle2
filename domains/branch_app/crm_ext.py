@@ -164,6 +164,7 @@ def init_crm_ext_tables():
             member_name   TEXT DEFAULT '',
             sale_id       INTEGER DEFAULT 0,
             status        TEXT DEFAULT 'active',
+            target_ym     TEXT DEFAULT '',
             created_at    TEXT DEFAULT (datetime('now','localtime'))
         );
 
@@ -421,6 +422,18 @@ def init_crm_ext_tables():
             sale_id     INTEGER DEFAULT 0
         );
     """)
+    conn.commit()
+
+    # CREATE 이후 컬럼 보정 (빈 DB에서 테이블 생성 전에 ALTER가 스킵된 경우 대비)
+    def _ensure(tbl, col, ddl):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
+        if cols and col not in cols:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {ddl}")
+    for _t in ("sales", "payment_orders", "gx_enrollments", "gx_applications",
+               "lesson_enrollments", "gx_sessions", "refunds"):
+        _ensure(_t, "is_test", "is_test INTEGER DEFAULT 0")
+    for _t in ("gx_enrollments", "gx_applications", "payment_orders"):
+        _ensure(_t, "target_ym", "target_ym TEXT DEFAULT ''")
     conn.commit()
     conn.close()
 

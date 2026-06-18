@@ -570,6 +570,31 @@ def gx_headcounts(gx_product_id: int, target_ym: str = "", include_test: bool = 
             "full": bool(cap and enrolled >= cap)}
 
 
+def branch_gx_calendar(branch: str, ym: str) -> dict:
+    """회원 홈 달력용 — 지점에서 '진행(running)'인 GX수업의 확정 수업일 + 날짜별 수업카드."""
+    conn = get_conn()
+    cur = conn.execute(
+        "SELECT id, name, instructor_name, start_time, end_time, capacity, max_headcount "
+        "FROM products WHERE category='gx' AND is_active=1 AND branch=?", (branch,))
+    cols = [d[0] for d in cur.description]
+    prods = [dict(zip(cols, r)) for r in cur.fetchall()]
+    conn.close()
+    by_date: dict = {}
+    for p in prods:
+        hc = gx_headcounts(p["id"], ym)
+        if hc["status"] != "running":      # 반 상태가 '진행'인 수업만
+            continue
+        for d in _confirmed_session_dates(p["id"], ym):
+            by_date.setdefault(d, []).append({
+                "product_id": p["id"], "name": p["name"],
+                "instructor_name": p.get("instructor_name", ""),
+                "start_time": p.get("start_time", ""), "end_time": p.get("end_time", ""),
+                "capacity": hc["max"] or p.get("capacity") or 0,
+                "enrolled": hc["enrolled"],
+            })
+    return {"ym": ym, "by_date": by_date, "dates": sorted(by_date.keys())}
+
+
 # ── GX 노출 정책 (1~23일 당월만 / 24~말일 +다음달, 재등록 20~23) ──
 def gx_visible_yms() -> dict:
     """오늘(오버라이드) 기준 shop에 보일 대상월 목록 + 재등록 기간 여부."""
