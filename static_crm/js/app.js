@@ -1814,6 +1814,7 @@
       ]);
       if (!pResp) return;
       const products = await pResp.json();
+      window._prodCache = products;   // 수정용 캐시
       const sales    = sResp ? await sResp.json() : [];
 
       const isStaff = user.role === 'staff';
@@ -1846,13 +1847,17 @@
                     <div class="row"><i data-lucide="target" style="width:13px;height:13px"></i><span>${p.lesson_type}</span></div>
                     <div class="row"><i data-lucide="repeat" style="width:13px;height:13px"></i><span>${p.sessions}회</span></div>`;
                 }
-                const delBtn = isStaff
-                  ? `<button onclick="deleteProduct(${p.id})" title="삭제"
-                       style="position:absolute;top:8px;right:8px;border:none;background:rgba(0,0,0,.35);
-                       color:#fff;border-radius:6px;width:24px;height:24px;cursor:pointer;font-size:13px">×</button>` : '';
+                const actBtns = isStaff
+                  ? `<div style="position:absolute;top:8px;right:8px;display:flex;gap:4px">
+                       <button onclick="editProduct(${p.id})" title="수정"
+                         style="border:none;background:rgba(0,0,0,.35);color:#fff;border-radius:6px;
+                         width:24px;height:24px;cursor:pointer;font-size:12px">✏️</button>
+                       <button onclick="deleteProduct(${p.id})" title="삭제"
+                         style="border:none;background:rgba(0,0,0,.35);color:#fff;border-radius:6px;
+                         width:24px;height:24px;cursor:pointer;font-size:13px">×</button></div>` : '';
                 return `
                   <div class="class-card" style="position:relative">
-                    ${delBtn}
+                    ${actBtns}
                     <div class="meta">
                       <div class="title">${p.name}</div>
                       ${detail}
@@ -1987,9 +1992,12 @@
     });
   };
 
-  async function openProductForm(category) {
+  // p = 기존 상품(수정 모드) 또는 null(신규)
+  async function openProductForm(category, p) {
+    const E = p || {};
+    const D = (k, dflt) => (E[k] !== undefined && E[k] !== null && E[k] !== '') ? String(E[k]) : dflt;
+    const editing = !!(p && p.id);
     if (category === 'gx') {
-      // 강사 목록 불러와서 select 옵션 구성
       let instructors = [];
       try {
         const r = await api(`/api/operations/instructors?branch=${encodeURIComponent(user.branch || '')}`);
@@ -1997,33 +2005,33 @@
       } catch (e) {}
       const instOpts = instructors.map(i => i.name);
       createModal({
-        title: 'GX 프로그램 추가',
+        title: editing ? 'GX 프로그램 수정' : 'GX 프로그램 추가',
         size: 'lg',
         fields: [
-          { id:'name',  label:'프로그램 이름', type:'text', required:true, placeholder:'예: 줌바댄스 / 필라테스' },
+          { id:'name',  label:'프로그램 이름', type:'text', required:true, default: D('name',''), placeholder:'예: 줌바댄스 / 필라테스' },
           { id:'instructor_name', label:'담당 강사', type: instOpts.length ? 'select' : 'text',
-            options: instOpts.length ? ['', ...instOpts] : undefined,
+            options: instOpts.length ? ['', ...instOpts] : undefined, default: D('instructor_name',''),
             placeholder:'강사 이름', hint: instOpts.length ? '' : '강사 탭에서 강사를 먼저 등록하면 선택할 수 있습니다' },
-          { id:'price', label:'금액 (원)', type:'number', default:'0', min:0 },
-          { id:'days',  label:'운영 요일', type:'text', placeholder:'예: 월수금 / 화목 / 매일', row:'dt' },
-          { id:'capacity', label:'정원 (명)', type:'number', default:'20', min:1, row:'dt' },
-          { id:'start_time', label:'시작 시간', type:'time', default:'10:00', row:'tm' },
-          { id:'end_time',   label:'종료 시간', type:'time', default:'11:00', row:'tm' },
-          { id:'min_headcount', label:'최소 개강 인원', type:'number', default:'0', min:0, row:'hc',
+          { id:'price', label:'금액 (원)', type:'number', default: D('price','0'), min:0 },
+          { id:'days',  label:'운영 요일', type:'text', default: D('days',''), placeholder:'예: 월수금 / 화목 / 매일', row:'dt' },
+          { id:'capacity', label:'정원 (명)', type:'number', default: D('capacity','20'), min:1, row:'dt' },
+          { id:'start_time', label:'시작 시간', type:'time', default: D('start_time','10:00'), row:'tm' },
+          { id:'end_time',   label:'종료 시간', type:'time', default: D('end_time','11:00'), row:'tm' },
+          { id:'min_headcount', label:'최소 개강 인원', type:'number', default: D('min_headcount','0'), min:0, row:'hc',
             hint:'0이면 제한 없음. 미달 시 신청만 받고 충족되면 자동 안내' },
-          { id:'max_headcount', label:'최대 인원', type:'number', default:'0', min:0, row:'hc' },
-          { id:'pass_type', label:'수강권 방식', type:'radio', options:[
+          { id:'max_headcount', label:'최대 인원', type:'number', default: D('max_headcount','0'), min:0, row:'hc' },
+          { id:'pass_type', label:'수강권 방식', type:'radio', default: D('pass_type','count'), options:[
             { value:'count', label:'횟수권' }, { value:'period', label:'기간권' },
           ]},
-          { id:'pass_count', label:'횟수 (횟수권)', type:'number', default:'10', min:1, row:'ps' },
-          { id:'pass_days',  label:'유효일수 (기간권)', type:'number', default:'30', min:1, row:'ps' },
-          { id:'prorate', label:'가변 요금 (중도등록 일할계산)', type:'radio', options:[
+          { id:'pass_count', label:'횟수 (횟수권)', type:'number', default: D('pass_count','10'), min:1, row:'ps' },
+          { id:'pass_days',  label:'유효일수 (기간권)', type:'number', default: D('pass_days','30'), min:1, row:'ps' },
+          { id:'prorate', label:'가변 요금 (중도등록 일할계산)', type:'radio', default: D('prorate','0'), options:[
             { value:'0', label:'고정 금액' }, { value:'1', label:'가변(남은 회차만 청구)' },
           ], hint:'가변: 이번 달 남은 수업 회차 × 회당 단가로 자동 계산 (공휴일 제외)' },
-          PAY_METHODS_FIELD(),
+          PAY_METHODS_FIELD(E.pay_methods),
         ],
-        submitLabel: 'GX 등록',
-        onSubmit: async (data) => submitProduct({ ...data, category:'gx',
+        submitLabel: editing ? 'GX 수정' : 'GX 등록',
+        onSubmit: async (data) => submitProduct({ ...data, id: E.id||0, category:'gx',
           price: parseInt(data.price)||0, capacity: parseInt(data.capacity)||20,
           min_headcount: parseInt(data.min_headcount)||0, max_headcount: parseInt(data.max_headcount)||0,
           pass_type: data.pass_type||'count', pass_count: parseInt(data.pass_count)||0,
@@ -2032,41 +2040,49 @@
       });
     } else if (category === 'lesson') {
       createModal({
-        title: '레슨 프로그램 추가',
+        title: editing ? '레슨 프로그램 수정' : '레슨 프로그램 추가',
         size: 'lg',
         fields: [
-          { id:'lesson_type', label:'레슨 종류', type:'radio', options:[
+          { id:'lesson_type', label:'레슨 종류', type:'radio', default: D('lesson_type','PT'), options:[
             { value:'PT', label:'PT' }, { value:'골프레슨', label:'골프레슨' },
           ]},
-          { id:'name',     label:'상품명', type:'text', required:true, placeholder:'예: PT 10회권 / 골프 주2회 레슨' },
-          { id:'sessions', label:'횟수 (회)', type:'number', default:'10', min:1, row:'ps' },
-          { id:'price',    label:'금액 (원)', type:'number', default:'0',  min:0, row:'ps' },
-          PAY_METHODS_FIELD(),
+          { id:'name',     label:'상품명', type:'text', required:true, default: D('name',''), placeholder:'예: PT 10회권 / 골프 주2회 레슨' },
+          { id:'sessions', label:'횟수 (회)', type:'number', default: D('sessions','10'), min:1, row:'ps' },
+          { id:'price',    label:'금액 (원)', type:'number', default: D('price','0'),  min:0, row:'ps' },
+          PAY_METHODS_FIELD(E.pay_methods),
         ],
-        submitLabel: '레슨 등록',
-        onSubmit: async (data) => submitProduct({ ...data, category:'lesson',
+        submitLabel: editing ? '레슨 수정' : '레슨 등록',
+        onSubmit: async (data) => submitProduct({ ...data, id: E.id||0, category:'lesson',
           price: parseInt(data.price)||0, sessions: parseInt(data.sessions)||0,
           pay_methods: (data.pay_methods||[]).join(',') }),
       });
     } else {
       createModal({
-        title: '상품 추가',
+        title: editing ? '상품 수정' : '상품 추가',
         fields: [
-          { id:'name',  label:'상품명',   type:'text', required:true, placeholder:'예: 아메리카노 / 운동타올' },
-          { id:'price', label:'가격 (원)', type:'number', default:'0', min:0 },
-          PAY_METHODS_FIELD(),
+          { id:'name',  label:'상품명',   type:'text', required:true, default: D('name',''), placeholder:'예: 아메리카노 / 운동타올' },
+          { id:'price', label:'가격 (원)', type:'number', default: D('price','0'), min:0 },
+          PAY_METHODS_FIELD(E.pay_methods),
         ],
-        submitLabel: '상품 등록',
-        onSubmit: async (data) => submitProduct({ ...data, category:'goods',
+        submitLabel: editing ? '상품 수정' : '상품 등록',
+        onSubmit: async (data) => submitProduct({ ...data, id: E.id||0, category:'goods',
           price: parseInt(data.price)||0, pay_methods: (data.pay_methods||[]).join(',') }),
       });
     }
   }
 
-  // 상품 폼 공통: 허용 결제수단 (체크 안 하면 전체 허용)
-  function PAY_METHODS_FIELD() {
+  // 상품 수정 진입
+  window.editProduct = function (pid) {
+    const p = (window._prodCache || []).find(x => x.id === pid);
+    if (!p) { showToast('상품 정보를 찾을 수 없습니다', 'err'); return; }
+    openProductForm(p.category, p);
+  };
+
+  // 상품 폼 공통: 허용 결제수단 (체크 안 하면 전체 허용). cur=기존 "카드,토스" 문자열
+  function PAY_METHODS_FIELD(cur) {
+    const def = (cur || '').split(',').map(s => s.trim()).filter(Boolean);
     return { id:'pay_methods', label:'허용 결제수단 (체크 안 하면 전체 허용)', type:'checks',
-      default:[], options:[
+      default: def, options:[
         { value:'카드', label:'💳 카드' }, { value:'현금', label:'💵 현금' },
         { value:'계좌이체', label:'🏦 계좌이체' }, { value:'관리비청구', label:'🏢 관리비청구' },
         { value:'토스', label:'📲 토스' },
