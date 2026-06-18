@@ -291,15 +291,15 @@ def _clear_fails(identifier: str):
 
 # ── 비밀번호 정책 ────────────────────────────────────────────────────────────────
 def _validate_pw_policy(pw: str) -> str | None:
-    """정책 위반 시 오류 메시지, 통과 시 None"""
+    """정책: 최소 8자 + 대문자 + 숫자 + 특수문자. 위반 시 메시지, 통과 시 None"""
     if len(pw) < 8:
         return "비밀번호는 최소 8자 이상이어야 합니다."
     if not re.search(r"[A-Z]", pw):
         return "대문자를 1자 이상 포함해야 합니다."
-    if not re.search(r"[a-z]", pw):
-        return "소문자를 1자 이상 포함해야 합니다."
     if not re.search(r"[0-9]", pw):
         return "숫자를 1자 이상 포함해야 합니다."
+    if not re.search(r"[^A-Za-z0-9]", pw):
+        return "특수문자를 1자 이상 포함해야 합니다."
     return None
 
 
@@ -698,38 +698,40 @@ class ChangePwBody(BaseModel):
 
 @app.post("/api/auth/change-password")
 async def api_change_password(request: Request, body: ChangePwBody):
-    """직원 비밀번호 변경 — 정책: 최소 8자, 대문자+소문자+숫자 포함"""
+    """직원 비밀번호 변경 — 정책: 8자+대문자+숫자+특수문자. 최초변경(must_change)은 현재비번 생략."""
     user = require_staff(request)
     if user.get("admin"):
         raise HTTPException(status_code=400, detail="관리자 비밀번호는 ERP에서 변경하세요")
 
-    # 정책 검증
     err = _validate_pw_policy(body.new_password)
     if err:
         raise HTTPException(status_code=400, detail=err)
 
-    # 현재 비밀번호 확인
     from domains.payroll.db import update_employee_password
     emp_id = int(user["sub"])
     conn = get_conn()
     row = conn.execute(
-        "SELECT username FROM employee_accounts WHERE employee_id=?", (emp_id,)
+        "SELECT password_hash, must_change_pw FROM employee_accounts WHERE employee_id=?", (emp_id,)
     ).fetchone()
     conn.close()
     if not row:
         raise HTTPException(status_code=404, detail="계정을 찾을 수 없습니다")
-    if not verify_employee_login(row[0], body.current_password):
+    must_change = bool(row[1])
+    # 최초 변경이 아니면 현재 비밀번호 확인 (토큰이 신원 증명)
+    if not must_change and not verify_password(body.current_password, row[0]):
         raise HTTPException(status_code=401, detail="현재 비밀번호가 올바르지 않습니다")
 
     if not update_employee_password(emp_id, body.new_password):
         raise HTTPException(status_code=500, detail="비밀번호 변경에 실패했습니다")
 
-    # 새 토큰 발급 (must_change_pw 해제)
+    # 새 토큰 발급 (must_change 해제, 직무 유지)
     token = create_token({
         "sub":    user["sub"],
         "role":   "staff",
+        "admin":  bool(user.get("admin")),
         "name":   user.get("name", ""),
         "branch": user.get("branch", ""),
+        "roles":  user.get("roles") or [],
         "must_change_pw": False,
     })
     return {"ok": True, "token": token}
@@ -2146,26 +2148,33 @@ class ChangePinBody(BaseModel):
 
 @app.post("/api/my/change-pin")
 async def api_my_change_pin(request: Request, body: ChangePinBody):
+    """회원 비밀번호 변경 — 정책 동일(8자+대문자+숫자+특수문자). 최초변경은 현재PIN 생략."""
     user = require_member(request)
     mid = int(user.get("sub") or 0)
     conn = get_conn()
-    row = _one(conn.execute("SELECT pin, pin_hash FROM members WHERE id=?", (mid,)))
+    row = _one(conn.execute("SELECT pin, pin_hash, must_change_pw FROM members WHERE id=?", (mid,)))
     if not row:
         conn.close(); raise HTTPException(status_code=404, detail="회원 정보를 찾을 수 없습니다")
-    # 현재 PIN 확인 (pin_hash 우선, 없으면 평문 pin)
-    ok = False
-    if row.get("pin_hash"):
-        ok = verify_password(body.current, row["pin_hash"])
-    if not ok and row.get("pin"):
-        ok = (body.current == str(row["pin"]))
-    if not ok:
-        conn.close(); raise HTTPException(status_code=401, detail="현재 비밀번호가 올바르지 않습니다")
-    if len(body.new) < 4:
-        conn.close(); raise HTTPException(status_code=400, detail="새 비밀번호는 4자 이상이어야 합니다")
+    must_change = bool(row.get("must_change_pw"))
+    # 최초 변경이 아니면 현재 비밀번호 확인
+    if not must_change:
+        ok = verify_password(body.current, row["pin_hash"]) if row.get("pin_hash") else False
+        if not ok and row.get("pin"):
+            ok = (body.current == str(row["pin"]))
+        if not ok:
+            conn.close(); raise HTTPException(status_code=401, detail="현재 비밀번호가 올바르지 않습니다")
+    err = _validate_pw_policy(body.new)
+    if err:
+        conn.close(); raise HTTPException(status_code=400, detail=err)
     conn.execute("UPDATE members SET pin_hash=?, pin='', must_change_pw=0 WHERE id=?",
                  (hash_password(body.new), mid))
     conn.commit(); conn.close()
-    return {"ok": True, "msg": "비밀번호가 변경되었습니다"}
+    # must_change 해제된 새 토큰 발급
+    token = create_token({
+        "sub": str(mid), "role": "member", "name": user.get("name", ""),
+        "branch": user.get("branch", ""), "must_change_pw": False,
+    })
+    return {"ok": True, "token": token, "msg": "비밀번호가 변경되었습니다"}
 
 
 # ── Classes API ────────────────────────────────────────────────────────────────

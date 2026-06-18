@@ -289,7 +289,7 @@
       localStorage.setItem('raon_branch', data.branch || '');
       localStorage.setItem('raon_admin', data.admin ? '1' : '');
       localStorage.setItem('raon_roles', JSON.stringify(data.roles || []));
-      if (data.must_change_pw) { showChangePw(password, keepLogin); return; }
+      // 비번변경 강제는 앱 진입 후 전역 게이트(checkMustChange)에서 처리
       window.location.href = '/home';
     }
 

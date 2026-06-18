@@ -53,6 +53,74 @@
     if (resp.status === 401) { logout(); return null; }
     return resp;
   }
+  function setToken(t) {
+    if (localStorage.getItem('raon_token')) localStorage.setItem('raon_token', t);
+    else sessionStorage.setItem('raon_token', t);
+  }
+
+  // ── 최초 로그인 비밀번호 변경 강제 (PIN→정식 비번) ─────────────
+  // 본사 admin 제외. 직원/회원 모두: PIN 로그인 시 변경 전까지 앱 사용 차단.
+  function pwStrength(p) {
+    let n = 0;
+    if (p.length >= 8) n++;
+    if (/[A-Z]/.test(p)) n++;
+    if (/[0-9]/.test(p)) n++;
+    if (/[^A-Za-z0-9]/.test(p)) n++;
+    const ok = n === 4;                     // 4개 모두 충족해야 통과
+    const level = n <= 1 ? 1 : (n <= 3 ? 2 : 3);  // 1빨강 2주황 3초록
+    return { ok, level };
+  }
+  async function checkMustChange() {
+    let me = null;
+    try { me = await (await api('/api/auth/me')).json(); } catch (e) { return; }
+    if (!me || !me.must_change_pw) return;
+    forcePwChange(me.role);
+  }
+  function forcePwChange(role) {
+    if (document.getElementById('pwgate')) return;
+    const ov = document.createElement('div');
+    ov.id = 'pwgate';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.6);display:flex;align-items:center;justify-content:center;padding:16px';
+    ov.innerHTML = `
+      <div style="width:min(420px,94vw);background:var(--surface,#fff);color:inherit;border-radius:16px;padding:24px">
+        <div style="font-size:18px;font-weight:900;margin-bottom:4px">🔐 비밀번호 변경 필요</div>
+        <div style="font-size:13px;opacity:.75;margin-bottom:14px">최초 로그인입니다. 보안을 위해 비밀번호를 반드시 변경해야 이용할 수 있습니다.<br>
+          <b>8자 이상 · 대문자 · 숫자 · 특수문자 포함</b></div>
+        <input id="pg1" type="password" placeholder="새 비밀번호" autocomplete="new-password"
+          style="width:100%;padding:13px 14px;border-radius:10px;border:1.5px solid rgba(128,128,128,.3);background:transparent;color:inherit;margin-bottom:8px">
+        <div style="display:flex;gap:6px;margin-bottom:8px">
+          <div class="pg-seg" style="flex:1;height:7px;border-radius:4px;background:#fff;border:1px solid rgba(128,128,128,.3)"></div>
+          <div class="pg-seg" style="flex:1;height:7px;border-radius:4px;background:#fff;border:1px solid rgba(128,128,128,.3)"></div>
+          <div class="pg-seg" style="flex:1;height:7px;border-radius:4px;background:#fff;border:1px solid rgba(128,128,128,.3)"></div>
+        </div>
+        <div id="pg-hint" style="font-size:11.5px;opacity:.7;margin-bottom:8px">8자 이상 · 대문자 · 숫자 · 특수문자</div>
+        <input id="pg2" type="password" placeholder="새 비밀번호 확인" autocomplete="new-password"
+          style="width:100%;padding:13px 14px;border-radius:10px;border:1.5px solid rgba(128,128,128,.3);background:transparent;color:inherit;margin-bottom:8px">
+        <div id="pg-err" style="color:#E60028;font-size:12.5px;min-height:18px;margin-bottom:6px"></div>
+        <button id="pg-submit" style="width:100%;height:46px;border:0;border-radius:10px;background:#E60028;color:#fff;font-weight:800;cursor:pointer">변경하고 시작하기</button>
+      </div>`;
+    document.body.appendChild(ov);
+    const segs = ov.querySelectorAll('.pg-seg');
+    const colors = ['#E60028','#f59e0b','#16a34a'];
+    document.getElementById('pg1').addEventListener('input', e => {
+      const { level } = pwStrength(e.target.value);
+      segs.forEach((s,i) => { s.style.background = (e.target.value && i < level) ? colors[level-1] : '#fff'; });
+    });
+    document.getElementById('pg-submit').addEventListener('click', async () => {
+      const p1 = document.getElementById('pg1').value, p2 = document.getElementById('pg2').value;
+      const err = document.getElementById('pg-err'); err.textContent = '';
+      if (!pwStrength(p1).ok) { err.textContent = '8자 이상 + 대문자 + 숫자 + 특수문자를 충족해야 합니다.'; return; }
+      if (p1 !== p2) { err.textContent = '비밀번호가 일치하지 않습니다.'; return; }
+      const path = role === 'member' ? '/api/my/change-pin' : '/api/auth/change-password';
+      const payload = role === 'member' ? { current:'', new:p1 } : { current_password:'', new_password:p1 };
+      const r = await api(path, { method:'POST', body: JSON.stringify(payload) });
+      const d = r ? await r.json().catch(()=>({})) : {};
+      if (!r || !r.ok) { err.textContent = d.detail || '변경 실패'; return; }
+      if (d.token) setToken(d.token);
+      ov.remove();
+      location.reload();
+    });
+  }
   async function apiForm(path, formData, method = 'POST') {
     const token = getToken();
     const headers = {};
@@ -401,6 +469,7 @@
     if (user.admin) loadAdminBranches();
     refreshNotif();
     refreshTestBanner();
+    checkMustChange();   // 최초 로그인 비번변경 강제 (직원·회원 공통, admin 제외)
     renderPage(currentPage);
   }
 
@@ -1298,11 +1367,7 @@
       </div>`;
     if (window.lucide) lucide.createIcons();
     renderHomeCalendar();
-    // 최초 로그인 비밀번호 변경 강제
-    try {
-      const me = await (await api('/api/auth/me')).json();
-      if (me && me.must_change_pw) openChangePin(true);
-    } catch (e) {}
+    // 비번변경 강제는 renderShell의 checkMustChange()에서 전역 처리
   }
 
   // ── 회원 홈 달력 (진행중 GX수업) ───────────────────────────────
