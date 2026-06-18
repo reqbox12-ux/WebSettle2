@@ -1175,6 +1175,12 @@
           </table></div></div>` : '';
 
     body.innerHTML = `
+      <div class="card" style="padding:14px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <b>🔗 CRM 페이롤 연동</b>
+        <span style="font-size:12.5px;color:var(--ink3)">CRM에서 확정된 PT·GX 수업료를 급여 지급액에 자동 입력 (고용형태 반영)</span>
+        <button class="xbtn primary" onclick="importCrmPayroll()">CRM 페이롤 가져오기</button>
+        <button class="xbtn" onclick="dlCrmPayroll()">📥 엑셀</button>
+      </div>
       <div class="card" style="padding:12px 18px;font-size:12.5px;color:var(--ink3)">
         💡 지급액(세전)을 확인·수정 후 <b>급여 확정</b>을 누르면 세금·4대보험이 자동 계산되어 저장됩니다.
         공단 고지내역이 업로드된 직원은 실납부액이 자동 적용됩니다. 0원은 제외됩니다.</div>
@@ -1184,6 +1190,31 @@
       <button class="xbtn primary" style="padding:13px 28px;font-size:14.5px"
         onclick="confirmPayroll()">💾 ${selYear}년 ${selMonth}월 급여 확정</button>`;
   }
+
+  window.importCrmPayroll = async function () {
+    const r = await api(`/api/payroll/crm-import?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) { showToast('가져오기 실패', 'err'); return; }
+    const rows = await r.json();
+    if (!rows.length) { showToast('확정된 CRM 페이롤이 없습니다 (CRM에서 먼저 월 확정)', 'err'); return; }
+    let filled = 0, missing = 0;
+    rows.forEach(x => {
+      const el = document.getElementById(`pay-${x.employee_id}`);
+      if (el) { el.value = x.suggested_gross; el.style.background = 'var(--poss)'; filled++; }
+      else missing++;
+    });
+    let msg = `✅ ${filled}명 지급액 자동 입력`;
+    if (missing) msg += ` · ${missing}명은 ERP 직원목록에 없어 제외(이름·지점 확인)`;
+    showToast(msg);
+  };
+  window.dlCrmPayroll = async function () {
+    const r = await api(`/api/payroll/crm-import/excel?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) { showToast('확정된 CRM 페이롤이 없습니다', 'err'); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `CRM페이롤_${selYear}년${String(selMonth).padStart(2,'0')}월.xlsx`;
+    a.click();
+  };
 
   window.confirmPayroll = async function () {
     if (!confirm(`${selYear}년 ${selMonth}월 급여를 확정할까요?\n기존 확정 내역은 교체됩니다.`)) return;

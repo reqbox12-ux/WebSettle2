@@ -255,6 +255,71 @@ async def api_live_sales(request: Request, year: int, month: int):
     }
 
 
+# ── CRM 페이롤 → ERP 급여 가져오기 ────────────────────────────
+def _crm_payroll_rows(year: int, month: int):
+    """확정된 CRM 페이롤을 직원별로 ERP 급여 지급액(세전)으로 변환."""
+    from domains.branch_app.crm_ext import get_crm_payroll
+    from modules.db import get_conn
+    cp = get_crm_payroll(year, month)
+    conn = get_conn()
+    out = []
+    for r in cp:
+        if r.get("status") != "confirmed":
+            continue
+        eid = r["employee_id"]
+        emp = conn.execute(
+            "SELECT name, branch, emp_type, base_salary, COALESCE(work_type,'commute') "
+            "FROM employees WHERE id=?", (eid,)).fetchone()
+        if not emp:
+            continue
+        name, branch, emp_type, base_salary, work_type = emp
+        crm_total = int(r.get("total_amount", 0) or 0)
+        base = int(base_salary or 0)
+        # 출퇴근형 = 기본급 + 수업료 / 프리랜서형 = 수업료만
+        gross = (base + crm_total) if work_type == "commute" else crm_total
+        out.append({
+            "employee_id": eid, "name": name, "branch": branch, "emp_type": emp_type,
+            "work_type": work_type, "base_salary": base,
+            "pt_amount": int(r.get("pt_amount", 0) or 0),
+            "gx_amount": int(r.get("gx_amount", 0) or 0),
+            "crm_total": crm_total, "suggested_gross": gross,
+        })
+    conn.close()
+    return out
+
+
+@app.get("/api/payroll/crm-import")
+async def api_payroll_crm_import(request: Request, year: int, month: int):
+    require_auth(request)
+    return _crm_payroll_rows(year, month)
+
+
+@app.get("/api/payroll/crm-import/excel")
+async def api_payroll_crm_excel(request: Request, year: int, month: int):
+    require_auth(request)
+    import io, pandas as pd
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+    rows = _crm_payroll_rows(year, month)
+    if not rows:
+        raise HTTPException(404, "확정된 CRM 페이롤이 없습니다")
+    wt = {"commute": "출퇴근형", "freelance": "프리랜서형"}
+    df = pd.DataFrame([{
+        "직원ID": r["employee_id"], "이름": r["name"], "지점": r["branch"],
+        "고용형태": wt.get(r["work_type"], r["work_type"]),
+        "기본급": r["base_salary"], "PT수업료": r["pt_amount"], "GX수업료": r["gx_amount"],
+        "CRM합계": r["crm_total"], "급여지급액(세전)": r["suggested_gross"],
+    } for r in rows])
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name=f"{year}년{month:02d}월", index=False)
+    buf.seek(0)
+    fn = quote(f"CRM페이롤_{year}년{month:02d}월.xlsx")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
+
+
 # ── 카드사 매출 대사 (Reconciliation) ─────────────────────────
 @app.get("/api/recon")
 async def api_recon(request: Request, year: int, month: int):
