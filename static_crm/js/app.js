@@ -656,63 +656,175 @@
   };
 
   // ── GX 수업관리 (출석) ────────────────────────────────────────
+  function _ymNow(){ const n=new Date(); return `${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}`; }
+  function _ymShift(ym, d){ let [y,m]=ym.split('-').map(Number); m+=d; while(m>12){m-=12;y++;} while(m<1){m+=12;y--;} return `${y}-${String(m).padStart(2,'0')}`; }
+
   async function renderGx(container) {
+    if (!window._gxYm) window._gxYm = _ymNow();
     container.innerHTML = '<div class="page"><div class="empty">GX 수업 로딩 중…</div></div>';
     const r = await api('/api/gx/classes');
     const classes = r && r.ok ? await r.json() : [];
     const opts = classes.map(c => `<option value="${c.id}">${c.name} (${c.instructor_name||''})</option>`).join('');
+    const canMgr = user.admin || (user.roles||[]).includes('manager');
     container.innerHTML = `
-      <div class="page"><div class="card">
-        <div class="card-head">GX 수업 출석체크</div>
-        ${classes.length ? `
-        <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
-          <select id="gx-class" class="inp" style="flex:1;min-width:160px">${opts}</select>
-          <input id="gx-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}">
-          <button class="xbtn primary" onclick="loadGxAtt()">불러오기</button>
-          <button class="xbtn" onclick="gxReReg()">📨 재등록 안내</button>
+      <div class="page">
+        <div class="card">
+          <div class="card-head">GX 반 상태판
+            <span style="float:right;display:inline-flex;gap:6px;align-items:center">
+              <button class="xbtn sm" onclick="gxYm(-1)">◀</button>
+              <b id="gx-ym">${window._gxYm}</b>
+              <button class="xbtn sm" onclick="gxYm(1)">▶</button>
+            </span>
+          </div>
+          <div id="gx-board"><div class="empty">로딩 중…</div></div>
         </div>
-        <div id="gx-att"></div>` : '<div class="empty">담당 GX 수업이 없습니다</div>'}
-      </div></div>`;
+        <div class="card" style="margin-top:14px">
+          <div class="card-head">GX 수업 출석체크</div>
+          ${classes.length ? `
+          <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap">
+            <select id="gx-class" class="inp" style="flex:1;min-width:160px">${opts}</select>
+            <input id="gx-date" type="date" class="inp" value="${new Date().toISOString().slice(0,10)}">
+            <button class="xbtn primary" onclick="loadGxAtt()">불러오기</button>
+          </div>
+          <div id="gx-att"></div>` : '<div class="empty">담당 GX 수업이 없습니다</div>'}
+        </div>
+      </div>`;
     if (window.lucide) lucide.createIcons();
+    window._gxCanMgr = canMgr;
+    loadGxBoard();
   }
-  window.gxReReg = async function () {
-    const sel = document.getElementById('gx-class');
-    const pid = parseInt(sel.value);
-    const className = sel.options[sel.selectedIndex]?.text || '';
-    // 수강 회원 미리보기
+  window.gxYm = function(d){ window._gxYm = _ymShift(window._gxYm, d); const el=document.getElementById('gx-ym'); if(el) el.textContent=window._gxYm; loadGxBoard(); };
+
+  async function loadGxBoard(){
+    const ym = window._gxYm;
+    const r = await api(`/api/gx/class-board?ym=${ym}`);
+    const rows = r && r.ok ? await r.json() : [];
+    const el = document.getElementById('gx-board');
+    if (!el) return;
+    if (!rows.length){ el.innerHTML='<div class="empty">GX 반이 없습니다</div>'; return; }
+    const canMgr = window._gxCanMgr;
+    el.innerHTML = rows.map(c=>{
+      const stTag = c.status==='running'
+        ? '<span style="color:#16a34a;font-weight:800">● 진행</span>'
+        : '<span style="color:#d97706;font-weight:800">● 대기</span>';
+      const shortTag = c.short ? `<span style="color:#dc2626;font-weight:700;font-size:12px"> · 최소 ${c.min}명 미달(현재 ${c.enrolled})</span>` : '';
+      const fullTag = c.full ? '<span style="color:#dc2626;font-weight:700;font-size:12px"> · 정원마감</span>' : '';
+      const mgrBtns = canMgr ? `
+        ${c.status==='running'
+          ? `<button class="xbtn sm" onclick="gxBoardWait(${c.id})">대기로</button>`
+          : `<button class="xbtn sm primary" onclick="gxBoardRun(${c.id})">진행 확정</button>`}` : '';
+      return `<div style="border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:8px">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+          <div>
+            <b>${c.name}</b> <span style="font-size:12px;color:var(--muted)">${c.instructor_name||''}</span><br>
+            <span style="font-size:13px">${stTag} · 👥 ${c.enrolled}${c.max?'/'+c.max:''}명${c.waiting?` · 대기 ${c.waiting}`:''}${shortTag}${fullTag}</span>
+          </div>
+          <div style="display:flex;gap:6px;flex-wrap:wrap">
+            <button class="xbtn sm" onclick="openSessionEditor(${c.id},'${c.name.replace(/'/g,"")}')">📅 수업일</button>
+            <button class="xbtn sm" onclick="gxRereg(${c.id},'${c.name.replace(/'/g,"")}')">📨 재등록 링크</button>
+            ${mgrBtns}
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  window.gxBoardRun = async function(pid){
+    if (!confirm('이 반을 「진행」으로 확정할까요?\n신청 회원에게 결제안내 문자가 발송됩니다.')) return;
+    const r = await api('/api/gx/class-run', { method:'POST', body: JSON.stringify({ gx_product_id: pid, ym: window._gxYm }) });
+    const d = await r?.json().catch(()=>({}));
+    if (!r?.ok){ showToast(d.detail||'실패','err'); return; }
+    showToast(`✅ 진행 확정 · 안내 ${d.notified||0}건`); loadGxBoard();
+  };
+  window.gxBoardWait = async function(pid){
+    const r = await api('/api/gx/class-wait', { method:'POST', body: JSON.stringify({ gx_product_id: pid, ym: window._gxYm }) });
+    if (r?.ok){ showToast('대기로 변경'); loadGxBoard(); }
+  };
+
+  // 재등록: 기존 회원에게 '다음 달분' 결제 링크 개별 발송 (20~23일 기간)
+  window.gxRereg = async function(pid, className){
     const mr = await api(`/api/sms/class-members?gx_product_id=${pid}`);
     const members = mr && mr.ok ? await mr.json() : [];
-    if (!members.length) { showToast('전화번호가 등록된 수강 회원이 없습니다','err'); return; }
-    // 템플릿 목록
-    const tr = await api('/api/sms/templates');
-    const templates = tr && tr.ok ? await tr.json() : [];
+    if (!members.length){ showToast('전화번호가 등록된 수강 회원이 없습니다','err'); return; }
     createModal({
-      title: `📨 재등록 안내 — ${className} (${members.length}명)`,
-      size: 'lg',
+      title: `📨 다음 달 재등록 링크 — ${className}`,
       fields: [
-        ...(templates.length ? [{ id:'_tpl', label:'템플릿', type:'select',
-          options:['', ...templates.map(t=>t.name)], hint:'선택 시 내용이 채워집니다' }] : []),
-        { id:'message', label:'메시지 (#{이름} 치환)', type:'textarea', rows:5, required:true,
-          placeholder:`#{이름}님, ${className} 재등록 기간입니다. 링크에서 결제해 주세요.` },
+        { id:'_info', label:'안내', type:'hidden', value:'' },
       ],
-      submitLabel: `${members.length}명에게 발송`,
-      onSubmit: async (data) => {
-        if (!data.message.trim()) throw new Error('메시지를 입력하세요');
-        const r = await api('/api/sms/reregister', { method:'POST',
-          body: JSON.stringify({ gx_product_id: pid, message: data.message }) });
+      submitLabel: `${members.length}명에게 다음달분 링크 발송`,
+      onSubmit: async () => {
+        const r = await api('/api/sms/reregister-links', { method:'POST',
+          body: JSON.stringify({ gx_product_id: pid }) });
         const d = await r?.json().catch(()=>({}));
         if (!r?.ok) throw new Error(d.detail||'발송 실패');
-        showToast(`✅ 재등록 안내 발송 ${d.sent}건 / 실패 ${d.failed}건`);
+        showToast(`✅ 재등록 링크 발송 ${d.sent}건 (중복제외 ${d.skipped}, 마감 ${d.blocked}, 실패 ${d.failed})`);
       }
     });
-    // 템플릿 선택 시 메시지 채우기
     setTimeout(()=>{
-      const ts = document.getElementById('modal-_tpl');
-      if (ts) ts.addEventListener('change', ()=>{
-        const t = templates.find(x=>x.name===ts.value);
-        if (t) document.getElementById('modal-message').value = t.content;
-      });
-    }, 200);
+      const body = document.querySelector('.modal-body');
+      if (body) body.insertAdjacentHTML('afterbegin',
+        `<div style="font-size:13px;color:var(--muted);line-height:1.6;margin-bottom:10px">
+          · 대상: 현재 수강 중인 ${members.length}명<br>
+          · 금액: 다음 달 1개월치(풀계산, 공휴일·횟수상한 반영)<br>
+          · 정원이 차면 자동 중단(선착순). 이미 결제한 회원은 제외.<br>
+          · <b>매월 20~23일에만 발송</b>됩니다.
+        </div>`);
+    }, 120);
+  };
+
+  // 강사 수업일 확정 캘린더
+  window.openSessionEditor = async function(pid, className){
+    const ym = window._gxYm;
+    const r = await api(`/api/gx/sessions?gx_product_id=${pid}&ym=${ym}`);
+    const cal = r && r.ok ? await r.json() : null;
+    if (!cal || cal.error){ showToast('수업일을 불러오지 못했습니다','err'); return; }
+    window._sess = { pid, ym, sel: new Set(cal.selected) };
+    const WK=['일','월','화','수','목','금','토'];
+    const first = new Date(`${ym}-01T00:00:00`);
+    const lead = first.getDay(); // 0=일
+    const cells = [];
+    for (let i=0;i<lead;i++) cells.push('<div></div>');
+    cal.days.forEach(d=>{
+      const on = window._sess.sel.has(d.date);
+      const hol = d.is_holiday;
+      const bg = on ? 'var(--accent)' : (hol ? 'rgba(220,38,38,.12)' : 'transparent');
+      const col = on ? '#fff' : (hol ? '#dc2626' : 'inherit');
+      cells.push(`<div onclick="toggleSession('${d.date}',this)" data-d="${d.date}"
+        style="cursor:pointer;text-align:center;padding:8px 0;border-radius:8px;background:${bg};color:${col};font-weight:${on?'800':'500'}"
+        title="${d.weekday}${hol?' · '+(d.holiday_name||'공휴일'):''}">${d.day}</div>`);
+    });
+    createModal({
+      title: `📅 수업일 확정 — ${className} (${ym})`,
+      size: 'lg',
+      fields: [{ id:'_x', label:'', type:'hidden', value:'' }],
+      submitLabel: '수업일 확정 저장',
+      onSubmit: async () => {
+        const dates = [...window._sess.sel].sort();
+        const r = await api('/api/gx/sessions', { method:'POST',
+          body: JSON.stringify({ gx_product_id: pid, ym, dates }) });
+        const d = await r?.json().catch(()=>({}));
+        if (!r?.ok) throw new Error(d.detail||'저장 실패');
+        showToast(`✅ ${d.count}일 확정 저장`); loadGxBoard();
+      }
+    });
+    setTimeout(()=>{
+      const body = document.querySelector('.modal-body');
+      if (body) body.innerHTML =
+        `<div style="font-size:12.5px;color:var(--muted);margin-bottom:8px">
+           운영요일이 자동 선택됩니다(공휴일 제외). 날짜를 눌러 제외/추가하세요. 미래 달도 미리 확정할 수 있습니다.
+           <span id="sess-cnt" style="font-weight:800;color:var(--accent)"> 선택 ${window._sess.sel.size}일</span>
+         </div>
+         <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;text-align:center;font-size:12px;color:var(--muted);margin-bottom:4px">
+           ${WK.map(w=>`<div>${w}</div>`).join('')}
+         </div>
+         <div style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px">${cells.join('')}</div>`;
+    }, 100);
+  };
+  window.toggleSession = function(date, el){
+    const s = window._sess.sel;
+    if (s.has(date)){ s.delete(date); el.style.background='transparent'; el.style.color='inherit'; el.style.fontWeight='500'; }
+    else { s.add(date); el.style.background='var(--accent)'; el.style.color='#fff'; el.style.fontWeight='800'; }
+    const c = document.getElementById('sess-cnt'); if (c) c.textContent = ` 선택 ${s.size}일`;
   };
 
   window.loadGxAtt = async function () {
