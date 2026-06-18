@@ -80,6 +80,7 @@
     dashboard:  { label: '대시보드',   icon: 'layout-grid',  sec: 'WORKSPACE' },
     live:       { label: '실시간 매출', icon: 'radio',        sec: 'WORKSPACE' },
     recon:      { label: '매출 대사·마감', icon: 'scale',     sec: 'WORKSPACE' },
+    mgmtfee:    { label: '관리비 청구', icon: 'receipt',      sec: '관리' },
     branch:     { label: '지점',       icon: 'building-2',   sec: '관리' },
     payroll:    { label: '인사/급여',  icon: 'credit-card',  sec: '관리' },
     attendance: { label: '출퇴근 현황', icon: 'clock',        sec: '관리' },
@@ -128,8 +129,9 @@
 
   function renderPage() {
     const el = document.getElementById('page-content');
-    ({ dashboard: renderDashboard, live: renderLive, recon: renderRecon, branch: renderBranch,
-       attendance: renderAttendance, payroll: renderPayroll, upload: renderUpload, settings: renderSettings,
+    ({ dashboard: renderDashboard, live: renderLive, recon: renderRecon, mgmtfee: renderMgmtFee,
+       branch: renderBranch, attendance: renderAttendance, payroll: renderPayroll,
+       upload: renderUpload, settings: renderSettings,
     }[currentPage] || (() => { el.innerHTML = '<div class="empty">준비 중</div>'; }))(el);
   }
 
@@ -400,6 +402,58 @@
     if (!confirm('마감을 해제할까요?')) return;
     const r = await api(`/api/locks?year=${selYear}&month=${selMonth}&branch=`, { method:'DELETE' });
     if (r && r.ok) { showToast('마감 해제'); loadRecon(); } else showToast('실패', 'err');
+  };
+
+  /* ════ 관리비 청구서 (관리비청구 결제 모음) ═════════════════ */
+  async function renderMgmtFee(el) {
+    el.innerHTML = `
+      <div class="ph"><div class="ph-title">관리비 청구</div>
+        <div class="ph-sub">'관리비청구'로 결제된 내역을 아파트(지점)별로 모아 청구서를 만듭니다</div></div>
+      <div class="filter-bar">${ymFilter(loadMgmtFee)}</div>
+      <div id="mf-body"><div class="empty">로드 중…</div></div>`;
+    loadMgmtFee();
+  }
+
+  async function loadMgmtFee() {
+    const body = document.getElementById('mf-body');
+    if (!body) return;
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const r = await api(`/api/mgmt-fee?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) { body.innerHTML = '<div class="empty">오류</div>'; return; }
+    const d = await r.json();
+    const W = v => Math.round(v||0).toLocaleString();
+    if (!d.branches.length) { body.innerHTML = '<div class="empty">📭 이번 달 관리비청구 내역이 없습니다 (결제 시 결제수단을 \'관리비청구\'로 선택)</div>'; return; }
+
+    body.innerHTML = `
+      <div class="card" style="padding:16px 20px;display:flex;align-items:center;gap:16px">
+        <span style="font-weight:700">${selYear}년 ${selMonth}월 관리비청구 합계</span>
+        <span style="font-size:22px;font-weight:900;color:var(--red)">${W(d.grand_total)}원</span>
+        <span style="font-size:12px;color:var(--ink3)">${d.branches.length}개 지점</span>
+      </div>
+      ${d.branches.map(b => `
+        <div class="card">
+          <div class="card-head" style="display:flex;justify-content:space-between;align-items:center">
+            <span>🏢 ${b.branch} <span style="color:var(--red);font-weight:800">${W(b.total)}원</span>
+              <span style="font-size:12px;color:var(--ink3)">(${b.items.length}건)</span></span>
+            <button class="xbtn primary sm" onclick="dlMgmtFee('${b.branch.replace(/'/g,'')}')">📥 청구서 Excel</button>
+          </div>
+          <div style="overflow-x:auto;padding:8px 0 4px">
+            <table class="tbl"><thead><tr><th>일자</th><th>분류</th><th>항목</th><th>회원</th><th>금액</th></tr></thead>
+              <tbody>${b.items.map(i=>`<tr>
+                <td>${i.date}</td><td>${i.category}</td>
+                <td style="text-align:left">${i.product}</td><td style="text-align:left">${i.member||'—'}</td>
+                <td style="font-weight:700">${W(i.amount)}원</td></tr>`).join('')}</tbody></table>
+          </div></div>`).join('')}`;
+  }
+
+  window.dlMgmtFee = async function (branch) {
+    const r = await api(`/api/mgmt-fee/excel?year=${selYear}&month=${selMonth}&branch=${encodeURIComponent(branch)}`);
+    if (!r || !r.ok) { showToast('내역이 없습니다', 'err'); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `관리비청구서_${branch}_${selYear}년${String(selMonth).padStart(2,'0')}월.xlsx`;
+    a.click();
   };
 
   /* ════ 지점 (상세/관리/매출입력) ═══════════════════════════ */

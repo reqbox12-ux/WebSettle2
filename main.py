@@ -255,6 +255,68 @@ async def api_live_sales(request: Request, year: int, month: int):
     }
 
 
+# ── 관리비 청구서 (관리비청구 결제 모음) ──────────────────────
+@app.get("/api/mgmt-fee")
+async def api_mgmt_fee(request: Request, year: int, month: int, branch: str = ""):
+    """관리비청구로 결제된 매출을 지점별로 집계 (아파트 청구서용)."""
+    require_auth(request)
+    from modules.db import get_conn
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    q = ("SELECT branch, category, product_name, member_name, amount, sale_date "
+         "FROM sales WHERE sale_date LIKE ? AND is_mgmt_fee=1 AND pay_method NOT LIKE '%환불%'")
+    args = [f"{prefix}%"]
+    if branch:
+        q += " AND branch=?"; args.append(branch)
+    q += " ORDER BY branch, category, sale_date"
+    rows = conn.execute(q, args).fetchall()
+    conn.close()
+
+    cat_lbl = {"gx": "GX 프로그램", "lesson": "레슨(PT·골프)", "goods": "상품"}
+    by_branch = {}
+    for br, cat, pname, mname, amt, sd in rows:
+        b = by_branch.setdefault(br, {"branch": br, "total": 0, "items": []})
+        b["total"] += int(amt or 0)
+        b["items"].append({"category": cat_lbl.get(cat, cat or "기타"), "product": pname,
+                           "member": mname, "amount": int(amt or 0), "date": (sd or "")[:10]})
+    return {"branches": list(by_branch.values()),
+            "grand_total": sum(b["total"] for b in by_branch.values())}
+
+
+@app.get("/api/mgmt-fee/excel")
+async def api_mgmt_fee_excel(request: Request, year: int, month: int, branch: str):
+    """지점(아파트)별 관리비 청구서 Excel."""
+    require_auth(request)
+    import io, pandas as pd
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+    from modules.db import get_conn
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    rows = conn.execute(
+        "SELECT category, product_name, member_name, amount, sale_date FROM sales "
+        "WHERE sale_date LIKE ? AND is_mgmt_fee=1 AND branch=? AND pay_method NOT LIKE '%환불%' "
+        "ORDER BY category, sale_date", (f"{prefix}%", branch)).fetchall()
+    conn.close()
+    if not rows:
+        raise HTTPException(404, "해당 지점의 관리비 청구 내역이 없습니다")
+    cat_lbl = {"gx": "GX 프로그램", "lesson": "레슨(PT·골프)", "goods": "상품"}
+    df = pd.DataFrame([{
+        "일자": (r[4] or "")[:10], "분류": cat_lbl.get(r[0], r[0]),
+        "항목": r[1], "회원": r[2], "금액": int(r[3] or 0),
+    } for r in rows])
+    total = int(df["금액"].sum())
+    df.loc[len(df)] = ["", "", "합계", "", total]
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name="관리비청구", index=False)
+    buf.seek(0)
+    fn = quote(f"관리비청구서_{branch}_{year}년{month:02d}월.xlsx")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
+
+
 # ── CRM 페이롤 → ERP 급여 가져오기 ────────────────────────────
 def _crm_payroll_rows(year: int, month: int):
     """확정된 CRM 페이롤을 직원별로 ERP 급여 지급액(세전)으로 변환."""
