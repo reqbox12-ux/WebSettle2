@@ -375,6 +375,8 @@
           </div>
         </header>
 
+        <div id="test-banner" style="display:none"></div>
+
         <main class="main" id="page-content">
           <div class="page"><div class="empty">로딩 중…</div></div>
         </main>
@@ -386,7 +388,25 @@
     if (window.lucide) lucide.createIcons();
     if (user.admin) loadAdminBranches();
     refreshNotif();
+    refreshTestBanner();
     renderPage(currentPage);
+  }
+
+  // ── 테스트 모드 경고 띠 ───────────────────────────────────────
+  async function refreshTestBanner() {
+    const el = document.getElementById('test-banner');
+    if (!el) return;
+    let tm = null;
+    try { const r = await api('/api/testmode'); tm = r && r.ok ? await r.json() : null; } catch(e){}
+    if (tm && tm.test_mode) {
+      el.style.display = 'block';
+      el.innerHTML = `<div style="background:#dc2626;color:#fff;text-align:center;
+        padding:7px 12px;font-size:13px;font-weight:800;letter-spacing:.3px">
+        🧪 테스트 모드 — 가상날짜 ${tm.virtual_date||tm.real_today} · 생성 데이터는 운영집계에서 제외됩니다</div>`;
+    } else {
+      el.style.display = 'none';
+      el.innerHTML = '';
+    }
   }
 
   // ── 관리자 지점 선택기 ────────────────────────────────────────
@@ -2561,12 +2581,34 @@
     container.innerHTML = '<div class="page"><div class="empty">로딩 중…</div></div>';
     const branch = user.branch || '';
     const isAdmin = user.admin;
-    const [pR, aR] = await Promise.all([
+    const [pR, aR, tR] = await Promise.all([
       isAdmin ? api('/api/settings/pay') : Promise.resolve(null),
       api(`/api/settings/branch-account?branch=${encodeURIComponent(branch)}`),
+      isAdmin ? api('/api/testmode') : Promise.resolve(null),
     ]);
     const pay = pR && pR.ok ? await pR.json() : null;
     const acct = aR && aR.ok ? await aR.json() : { bank:'', account_no:'', account_holder:'' };
+    const tm = tR && tR.ok ? await tR.json() : null;
+
+    const testBox = isAdmin && tm ? `
+      <div class="card" style="padding:18px 20px;margin-bottom:14px;border:2px solid ${tm.test_mode?'#dc2626':'var(--line)'}">
+        <div style="font-weight:800;margin-bottom:4px">🧪 테스트 모드 ${tm.test_mode?'<span style="color:#dc2626">(켜짐)</span>':''}</div>
+        <div style="font-size:12px;color:var(--muted);margin-bottom:12px">
+          테스트로 만든 결제·수강·신청 데이터는 <b>is_test 태그</b>로 격리되어 운영집계에 포함되지 않습니다.
+          가상 '오늘' 날짜를 지정해 노출/재등록/일할 로직을 시점 이동하며 검증할 수 있습니다.
+        </div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+          <label style="font-size:13px">가상 날짜</label>
+          <input class="inp" id="tm-date" type="date" value="${tm.virtual_date||tm.real_today}" style="width:170px">
+          <button class="btn ${tm.test_mode?'':'primary'} sm" onclick="toggleTestMode(${tm.test_mode?0:1})">${tm.test_mode?'테스트 모드 끄기':'테스트 모드 켜기'}</button>
+          ${tm.test_mode?`<button class="btn sm" onclick="saveVirtualDate()">날짜 적용</button>`:''}
+        </div>
+        <div style="font-size:12px;color:var(--muted)">실제 오늘: ${tm.real_today}</div>
+        <div style="margin-top:12px;border-top:1px solid var(--line);padding-top:12px">
+          <button class="btn sm" style="color:#dc2626;border-color:#dc2626" onclick="purgeTestData()">🗑 테스트 데이터 전체 삭제</button>
+          <span style="font-size:12px;color:var(--muted);margin-left:8px">is_test=1 데이터만 삭제(운영 데이터 안전)</span>
+        </div>
+      </div>` : '';
 
     const adminBox = isAdmin && pay ? `
       <div class="card" style="padding:18px 20px;margin-bottom:14px">
@@ -2593,7 +2635,8 @@
     container.innerHTML = `
       <div class="page">
         <div class="card-head"><div><div class="section-title">설정</div>
-          <div class="section-sub">${branch} · 입금계좌${isAdmin?' · 토스 · 알리고':''}</div></div></div>
+          <div class="section-sub">${branch} · 입금계좌${isAdmin?' · 토스 · 알리고 · 테스트':''}</div></div></div>
+        ${testBox}
         ${adminBox}
         <div class="card" style="padding:18px 20px;margin-bottom:14px">
           <div style="font-weight:800;margin-bottom:4px">🏦 지점 입금계좌 (계좌이체 안내문자용)</div>
@@ -2641,6 +2684,30 @@
         variant_key: document.getElementById('st-vk').value.trim() || 'widgetA' }) });
     if (r?.ok) { showToast('✅ 토스 설정 저장'); renderSettings(document.getElementById('page-content')); }
     else showToast('저장 실패', 'err');
+  };
+  window.toggleTestMode = async function (on) {
+    const vdate = document.getElementById('tm-date')?.value || '';
+    if (on && !confirm('테스트 모드를 켭니다.\n이후 생성되는 결제·수강 데이터는 is_test 태그가 붙어 운영집계에서 제외됩니다.\n계속할까요?')) return;
+    const r = await api('/api/testmode', { method:'POST', body: JSON.stringify({ on: !!on, vdate }) });
+    const d = await r?.json().catch(()=>({}));
+    if (!r?.ok) { showToast(d.detail||'실패', 'err'); return; }
+    showToast(on ? '🧪 테스트 모드 ON' : '테스트 모드 OFF');
+    await refreshTestBanner();
+    renderSettings(document.getElementById('page-content'));
+  };
+  window.saveVirtualDate = async function () {
+    const vdate = document.getElementById('tm-date')?.value || '';
+    const r = await api('/api/testmode', { method:'POST', body: JSON.stringify({ on: true, vdate }) });
+    if (r?.ok) { showToast(`📅 가상 날짜 ${vdate} 적용`); await refreshTestBanner(); renderSettings(document.getElementById('page-content')); }
+    else showToast('적용 실패', 'err');
+  };
+  window.purgeTestData = async function () {
+    if (!confirm('is_test=1 인 모든 테스트 데이터를 삭제합니다.\n운영 데이터는 영향받지 않습니다. 계속할까요?')) return;
+    const r = await api('/api/testmode/purge', { method:'POST' });
+    const d = await r?.json().catch(()=>({}));
+    if (!r?.ok) { showToast(d.detail||'삭제 실패', 'err'); return; }
+    const total = Object.values(d.deleted||{}).reduce((a,b)=>a+(b||0),0);
+    showToast(`🗑 테스트 데이터 ${total}건 삭제`);
   };
   window.saveAligo = async function () {
     const r = await api('/api/settings/aligo', { method:'POST',
