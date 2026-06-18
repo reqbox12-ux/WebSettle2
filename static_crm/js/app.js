@@ -1704,13 +1704,18 @@
         <span style="color:var(--muted)">${lbl}</span>
         <span style="font-weight:600;color:var(--ink)">${val || '—'}</span></div>`;
 
-    const salesRows = sales.length ? sales.map(s => `
-      <tr><td>${(s.sale_date || s.created_at || '').slice(0,10)}</td>
+    const canRefund = hasRole(user, ['manager']);
+    const salesRows = sales.length ? sales.map(s => {
+      const refunded = (s.pay_method || '').includes('환불');
+      return `<tr><td>${(s.sale_date || s.created_at || '').slice(0,10)}</td>
         <td style="text-align:left">${s.product_name || '—'}</td>
         <td>${PROD_CAT[s.category]?.label?.replace(' 프로그램','') || s.category || '—'}</td>
         <td style="font-weight:700">${(s.amount||0).toLocaleString()}원</td>
-        <td>${s.pay_method || '—'}</td></tr>`).join('')
-      : '<tr><td colspan="5" style="text-align:center;color:var(--muted)">구매 내역 없음</td></tr>';
+        <td>${s.pay_method || '—'}</td>
+        <td>${refunded ? '<span class="badge outline">환불됨</span>'
+          : (canRefund ? `<button class="btn sm" onclick="refundSale(${s.id},'${(s.member_name||'').replace(/'/g,'')}',${s.amount||0})">환불</button>` : '')}</td></tr>`;
+    }).join('')
+      : '<tr><td colspan="6" style="text-align:center;color:var(--muted)">구매 내역 없음</td></tr>';
 
     openHtmlModal(`회원 정보 — ${m.name}`, `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 24px;margin-bottom:6px">
@@ -1736,12 +1741,27 @@
       </div>
       <div style="max-height:240px;overflow-y:auto;border:1px solid var(--border);border-radius:10px">
         <table class="tbl" style="margin:0">
-          <thead><tr><th>일자</th><th style="text-align:left">상품</th><th>분류</th><th>금액</th><th>결제</th></tr></thead>
+          <thead><tr><th>일자</th><th style="text-align:left">상품</th><th>분류</th><th>금액</th><th>결제</th><th></th></tr></thead>
           <tbody>${salesRows}</tbody></table>
       </div>`,
       `<button class="btn" onclick="closeModal();modalNewSale(${id})"><i data-lucide="credit-card"></i> 결제 등록</button>
        <button class="btn primary" onclick="editMember(${id})"><i data-lucide="edit"></i> 수정</button>`);
     if (window.lucide) lucide.createIcons();
+  };
+
+  // ── 결제 환불 (매니저·관리자) ───────────────────────────────
+  window.refundSale = async function (saleId, memberName, amount) {
+    const reason = prompt(`${memberName}님 결제(${(amount||0).toLocaleString()}원)를 환불합니다.\n사유를 입력하세요 (취소하려면 빈칸 후 취소):`);
+    if (reason === null) return;
+    if (!confirm('정말 환불 처리할까요? 토스 결제건은 토스에서 자동 취소됩니다.')) return;
+    const r = await api('/api/refund', { method:'POST',
+      body: JSON.stringify({ sale_id: saleId, reason }) });
+    const d = await r?.json().catch(()=>({}));
+    if (r?.ok) {
+      showToast(`✅ 환불 완료 (${d.method === 'toss' ? '토스 자동취소' : '수기'})`);
+      closeModal();
+      if (currentPage === 'members') loadMembers('');
+    } else showToast(d.detail || '환불 실패', 'err');
   };
 
   // ── 회원 수정 ───────────────────────────────────────────────

@@ -2211,6 +2211,46 @@ async def api_gx_check_open(request: Request, gx_product_id: int):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  환불 처리 (토스 취소 연동 / 수기) — 매니저·관리자
+# ═══════════════════════════════════════════════════════════════════════════════
+class RefundBody(BaseModel):
+    sale_id:       int
+    refund_amount: int = 0
+    reason:        str = ""
+
+
+@app.post("/api/refund")
+async def api_refund(request: Request, body: RefundBody):
+    user = require_role(request, "manager")
+    from domains.branch_app.ops import process_refund, get_sale, log_action, is_locked
+    sale = get_sale(body.sale_id)
+    if not sale:
+        raise HTTPException(404, "결제 내역을 찾을 수 없습니다")
+    # 마감된 월이면 환불 차단
+    sd = (sale.get("sale_date") or "")[:7]
+    if sd:
+        y, m = int(sd[:4]), int(sd[5:7])
+        if is_locked(y, m, sale.get("branch", "")):
+            raise HTTPException(400, f"{y}년 {m}월은 마감되어 환불할 수 없습니다 (먼저 마감 해제)")
+    amt = body.refund_amount or int(sale.get("amount", 0))
+    res = process_refund(body.sale_id, amt, body.reason, user.get("name", ""))
+    if not res.get("ok"):
+        raise HTTPException(400, res.get("error", "환불 실패"))
+    log_action(user.get("name", ""), "sale.refund",
+               target=f"{sale.get('member_name','')} / {sale.get('product_name','')}",
+               detail=f"{amt:,}원 ({res.get('method')})", branch=sale.get("branch", ""),
+               actor_role="manager")
+    return {"ok": True, "method": res.get("method")}
+
+
+@app.get("/api/refunds")
+async def api_refunds(request: Request, branch: str = "", year: int = None, month: int = None):
+    user = require_staff(request)
+    from domains.branch_app.ops import get_refunds
+    return get_refunds(_scope_branch(user, branch), year, month)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  문자(SMS) 시스템: 템플릿 + 일괄발송 + 재등록 안내
 # ═══════════════════════════════════════════════════════════════════════════════
 @app.get("/api/sms/templates")
