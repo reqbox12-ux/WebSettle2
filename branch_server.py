@@ -2272,6 +2272,46 @@ async def api_gx_class_wait(request: Request, body: ClassStatusBody):
     return gx_set_class_waiting(body.gx_product_id, body.ym, decided_by=user.get("name", ""))
 
 
+@app.get("/api/gx/sessions")
+async def api_gx_sessions(request: Request, gx_product_id: int, ym: str):
+    """강사 수업일 편집 캘린더 — GX강사(본인)·매니저·관리자."""
+    user = require_role(request, "gx", "manager")
+    _assert_gx_owner_or_mgr(user, gx_product_id)
+    from domains.branch_app.pay_sms import gx_session_calendar
+    return gx_session_calendar(gx_product_id, ym)
+
+
+class SessionsBody(BaseModel):
+    gx_product_id: int
+    ym:            str
+    dates:         list[str] = []
+
+
+@app.post("/api/gx/sessions")
+async def api_gx_sessions_save(request: Request, body: SessionsBody):
+    """강사가 수업일 확정 저장 — GX강사(본인)·매니저·관리자."""
+    user = require_role(request, "gx", "manager")
+    _assert_gx_owner_or_mgr(user, body.gx_product_id)
+    from domains.branch_app.pay_sms import gx_confirm_sessions
+    return gx_confirm_sessions(body.gx_product_id, body.ym, body.dates,
+                               confirmed_by=user.get("name", ""))
+
+
+def _assert_gx_owner_or_mgr(user: dict, gx_product_id: int):
+    """GX강사는 본인 담당 수업만. 매니저/관리자/인포는 통과."""
+    roles = set(user_roles(user))
+    if user.get("admin") or roles.intersection({"manager", "info"}):
+        return
+    if "gx" in roles:
+        conn = get_conn()
+        owner = conn.execute("SELECT instructor_employee_id FROM products WHERE id=?",
+                             (gx_product_id,)).fetchone()
+        conn.close()
+        if owner and owner[0] == int(user.get("sub") or 0):
+            return
+    raise HTTPException(status_code=403, detail="본인 담당 수업만 편집할 수 있습니다")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  환불 처리 (토스 취소 연동 / 수기) — 매니저·관리자
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -138,6 +138,67 @@ def gx_price(product: dict, target_ym: str, ref_dt=None) -> dict:
             "confirmed": bool(conf)}
 
 
+# ── 강사 수업일 확정 캘린더 ───────────────────────────────────
+def gx_session_calendar(gx_product_id: int, ym: str) -> dict:
+    """해당 월 수업일 편집용 캘린더.
+    - 자동: 운영요일 매칭 - 공휴일 (기본 체크)
+    - 강사가 확정했으면 그 선택을 우선 표시
+    - 운영요일 외 날짜도 후보로 노출(강사가 보강 추가 가능)
+    """
+    import calendar
+    from datetime import date
+    product = get_product(gx_product_id)
+    if not product:
+        return {"error": "상품 없음"}
+    y, m = int(ym[:4]), int(ym[5:7])
+    weekdays = _parse_weekdays(product)
+    auto = set(_gx_session_dates(y, m, weekdays))
+    conf = _confirmed_session_dates(gx_product_id, ym)
+    confirmed = bool(conf)
+    selected = set(conf) if confirmed else set(auto)
+    conn = get_conn()
+    hol = {r[0]: r[1] for r in conn.execute(
+        "SELECT holiday_date, name FROM public_holidays WHERE year=?", (y,))}
+    conn.close()
+    WK = ["월", "화", "수", "목", "금", "토", "일"]
+    days = []
+    for d in range(1, calendar.monthrange(y, m)[1] + 1):
+        dt = date(y, m, d)
+        ds = dt.isoformat()
+        days.append({
+            "date": ds, "day": d, "weekday": WK[dt.weekday()],
+            "is_holiday": ds in hol, "holiday_name": hol.get(ds, ""),
+            "candidate": dt.weekday() in weekdays,
+            "on": ds in selected,
+        })
+    return {"confirmed": confirmed, "ym": ym, "weekdays": sorted(weekdays),
+            "selected": sorted(selected), "count": len(selected),
+            "cap": int(product.get("pass_count") or 0),
+            "pass_type": product.get("pass_type", "count"), "days": days}
+
+
+def gx_confirm_sessions(gx_product_id: int, ym: str, dates: list,
+                        confirmed_by: str = "") -> dict:
+    """강사가 선택한 수업일을 확정 저장(해당 월 덮어쓰기). 미래월도 가능."""
+    from domains.branch_app.testmode import is_test_flag
+    product = get_product(gx_product_id)
+    if not product:
+        return {"ok": False, "error": "상품 없음"}
+    branch = product.get("branch", "")
+    itest = is_test_flag()
+    clean = sorted({d.strip() for d in dates if d and d.strip().startswith(ym)})
+    conn = get_conn()
+    conn.execute("DELETE FROM gx_sessions WHERE gx_product_id=? AND ym=?", (gx_product_id, ym))
+    for ds in clean:
+        conn.execute("""INSERT OR REPLACE INTO gx_sessions
+            (gx_product_id, branch, ym, session_date, confirmed, confirmed_by, is_test)
+            VALUES (?,?,?,?,1,?,?)""",
+            (gx_product_id, branch, ym, ds, confirmed_by, itest))
+    conn.commit()
+    conn.close()
+    return {"ok": True, "ym": ym, "count": len(clean), "dates": clean}
+
+
 # 하위호환: 기존 호출부(gx_current_price)가 남아있을 수 있어 래핑
 def gx_current_price(product: dict, ref_dt=None) -> dict:
     from domains.branch_app.testmode import today_str
