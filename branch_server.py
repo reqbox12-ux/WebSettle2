@@ -2381,6 +2381,44 @@ async def api_holiday_del(request: Request, hid: int):
     return {"ok": True}
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  테스트 모드 (가상 날짜 + 데이터 격리) — admin
+# ═══════════════════════════════════════════════════════════════════════════════
+@app.get("/api/testmode")
+async def api_testmode_get(request: Request):
+    require_staff(request)
+    from domains.branch_app.testmode import get_test_state
+    return get_test_state()
+
+
+class TestModeBody(BaseModel):
+    on:    bool
+    vdate: str = ""   # YYYY-MM-DD
+
+
+@app.post("/api/testmode")
+async def api_testmode_set(request: Request, body: TestModeBody):
+    user = require_staff(request)
+    if not user.get("admin"):
+        raise HTTPException(403, "관리자 전용")
+    import re as _re
+    if body.on and body.vdate and not _re.fullmatch(r"\d{4}-\d{2}-\d{2}", body.vdate):
+        raise HTTPException(400, "날짜는 YYYY-MM-DD 형식이어야 합니다")
+    from domains.branch_app.testmode import set_test_mode
+    set_test_mode(body.on, body.vdate)
+    return {"ok": True}
+
+
+@app.post("/api/testmode/purge")
+async def api_testmode_purge(request: Request):
+    user = require_staff(request)
+    if not user.get("admin"):
+        raise HTTPException(403, "관리자 전용")
+    from domains.branch_app.testmode import purge_test_data
+    counts = purge_test_data()
+    return {"ok": True, "deleted": counts}
+
+
 # ── Entry point ────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     import uvicorn

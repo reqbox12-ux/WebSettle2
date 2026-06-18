@@ -61,6 +61,29 @@ def init_crm_ext_tables():
     # 상품별 허용 결제수단 (쉼표구분, 빈값=전체 허용)
     if "pay_methods" not in pcols:
         conn.execute("ALTER TABLE products ADD COLUMN pay_methods TEXT DEFAULT ''")
+    # GX 1회 단가 + 운영요일 비트(월화수목금토일) — 횟수권 자동집계용
+    if "unit_price" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN unit_price INTEGER DEFAULT 0")
+    if "weekday_bits" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN weekday_bits TEXT DEFAULT ''")  # 예 '0,2,4'
+
+    # is_test 태그 (테스트모드 데이터 격리) — 운영 집계는 is_test=0만
+    for tbl in ("sales", "payment_orders", "gx_enrollments", "gx_applications",
+                "lesson_enrollments", "gx_sessions", "refunds"):
+        try:
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
+            if cols and "is_test" not in cols:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN is_test INTEGER DEFAULT 0")
+        except Exception:
+            pass
+    # gx_enrollments 월별 수강 분리 (target_ym)
+    gcols = [r[1] for r in conn.execute("PRAGMA table_info(gx_enrollments)").fetchall()]
+    if gcols and "target_ym" not in gcols:
+        conn.execute("ALTER TABLE gx_enrollments ADD COLUMN target_ym TEXT DEFAULT ''")
+    # payment_orders 대상연월(결제 후 수강 생성 달)
+    ocols = [r[1] for r in conn.execute("PRAGMA table_info(payment_orders)").fetchall()]
+    if ocols and "target_ym" not in ocols:
+        conn.execute("ALTER TABLE payment_orders ADD COLUMN target_ym TEXT DEFAULT ''")
 
     # 직원 고용형태: 트레이너/프로의 출퇴근형(정규) vs 프리랜서형
     ecols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
@@ -304,6 +327,38 @@ def init_crm_ext_tables():
             locked_by  TEXT DEFAULT '',
             locked_at  TEXT DEFAULT (datetime('now','localtime')),
             UNIQUE(year, month, branch)
+        );
+
+        -- ── 앱 전역 상태 (테스트모드/가상날짜 등) ───────────────
+        CREATE TABLE IF NOT EXISTS app_state (
+            k  TEXT PRIMARY KEY,
+            v  TEXT DEFAULT ''
+        );
+
+        -- ── GX 수업일 확정 (강사가 월별 실제 수업일 지정) ───────
+        CREATE TABLE IF NOT EXISTS gx_sessions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            gx_product_id INTEGER NOT NULL,
+            branch        TEXT DEFAULT '',
+            ym            TEXT NOT NULL,        -- 'YYYY-MM'
+            session_date  TEXT NOT NULL,        -- 'YYYY-MM-DD'
+            confirmed     INTEGER DEFAULT 0,    -- 강사 확정 여부
+            confirmed_by  TEXT DEFAULT '',
+            is_test       INTEGER DEFAULT 0,
+            created_at    TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(gx_product_id, session_date)
+        );
+
+        -- ── 반(수업) 월별 상태: 대기/진행 ──────────────────────
+        CREATE TABLE IF NOT EXISTS gx_class_status (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            gx_product_id INTEGER NOT NULL,
+            ym            TEXT NOT NULL,         -- 'YYYY-MM'
+            status        TEXT DEFAULT 'waiting',-- waiting|running
+            decided_by    TEXT DEFAULT '',
+            decided_at    TEXT,
+            is_test       INTEGER DEFAULT 0,
+            UNIQUE(gx_product_id, ym)
         );
 
         -- ── 환불 기록 ───────────────────────────────────────────
