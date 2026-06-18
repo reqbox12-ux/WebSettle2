@@ -2004,39 +2004,55 @@
         if (r) instructors = await r.json();
       } catch (e) {}
       const instOpts = instructors.map(i => i.name);
+      // 운영요일 기본값: weekday_bits('0,2,4') 우선, 없으면 days 자연어에서 추론
+      const WKV = {'월':'0','화':'1','수':'2','목':'3','금':'4','토':'5','일':'6'};
+      let wkDef = [];
+      if (E.weekday_bits) wkDef = String(E.weekday_bits).split(',').map(s=>s.trim()).filter(s=>s!=='');
+      else if (E.days) { if (E.days.includes('매일')) wkDef=['0','1','2','3','4','5','6']; else wkDef=[...E.days].filter(c=>WKV[c]).map(c=>WKV[c]); }
       createModal({
         title: editing ? 'GX 프로그램 수정' : 'GX 프로그램 추가',
         size: 'lg',
         fields: [
+          { id:'pass_type', label:'수강권 방식', type:'radio', default: D('pass_type','count'), options:[
+            { value:'count', label:'횟수권 (진행 회차 × 1회단가)' }, { value:'period', label:'기간권 (정액·중도일할)' },
+          ], hint:'둘 다 월별로 계산됩니다. 부과 방식만 다릅니다.' },
           { id:'name',  label:'프로그램 이름', type:'text', required:true, default: D('name',''), placeholder:'예: 줌바댄스 / 필라테스' },
           { id:'instructor_name', label:'담당 강사', type: instOpts.length ? 'select' : 'text',
             options: instOpts.length ? ['', ...instOpts] : undefined, default: D('instructor_name',''),
             placeholder:'강사 이름', hint: instOpts.length ? '' : '강사 탭에서 강사를 먼저 등록하면 선택할 수 있습니다' },
-          { id:'price', label:'금액 (원)', type:'number', default: D('price','0'), min:0 },
-          { id:'days',  label:'운영 요일', type:'text', default: D('days',''), placeholder:'예: 월수금 / 화목 / 매일', row:'dt' },
-          { id:'capacity', label:'정원 (명)', type:'number', default: D('capacity','20'), min:1, row:'dt' },
+          { id:'weekdays', label:'운영 요일', type:'checks', default: wkDef, options:[
+            {value:'0',label:'월'},{value:'1',label:'화'},{value:'2',label:'수'},
+            {value:'3',label:'목'},{value:'4',label:'금'},{value:'5',label:'토'},{value:'6',label:'일'},
+          ], hint:'선택한 요일이 강사 화면에 자동 체크됩니다(공휴일 제외).' },
+          { id:'unit_price', label:'1회 단가 (원, 횟수권)', type:'number', default: D('unit_price','0'), min:0, row:'up',
+            hint:'횟수권: 회당 단가. 당월=남은회차×단가, 다음달=전체회차×단가(횟수상한 캡).' },
+          { id:'pass_count', label:'횟수 상한 (회)', type:'number', default: D('pass_count','0'), min:0, row:'up',
+            hint:'0이면 상한 없음. 월 청구 회차는 이 값을 넘지 않음.' },
+          { id:'price', label:'정액 금액 (원, 기간권)', type:'number', default: D('price','0'), min:0, row:'pp' },
+          { id:'pass_days',  label:'유효일수 (기간권)', type:'number', default: D('pass_days','30'), min:1, row:'pp' },
           { id:'start_time', label:'시작 시간', type:'time', default: D('start_time','10:00'), row:'tm' },
           { id:'end_time',   label:'종료 시간', type:'time', default: D('end_time','11:00'), row:'tm' },
           { id:'min_headcount', label:'최소 개강 인원', type:'number', default: D('min_headcount','0'), min:0, row:'hc',
-            hint:'0이면 제한 없음. 미달 시 신청만 받고 충족되면 자동 안내' },
-          { id:'max_headcount', label:'최대 인원', type:'number', default: D('max_headcount','0'), min:0, row:'hc' },
-          { id:'pass_type', label:'수강권 방식', type:'radio', default: D('pass_type','count'), options:[
-            { value:'count', label:'횟수권' }, { value:'period', label:'기간권' },
-          ]},
-          { id:'pass_count', label:'횟수 (횟수권)', type:'number', default: D('pass_count','10'), min:1, row:'ps' },
-          { id:'pass_days',  label:'유효일수 (기간권)', type:'number', default: D('pass_days','30'), min:1, row:'ps' },
-          { id:'prorate', label:'가변 요금 (중도등록 일할계산)', type:'radio', default: D('prorate','0'), options:[
-            { value:'0', label:'고정 금액' }, { value:'1', label:'가변(남은 회차만 청구)' },
-          ], hint:'가변: 이번 달 남은 수업 회차 × 회당 단가로 자동 계산 (공휴일 제외)' },
+            hint:'0이면 제한 없음. 미달 시 신청만 받고 충족·관리자 진행 시 개설' },
+          { id:'max_headcount', label:'최대 정원 (명)', type:'number', default: D('max_headcount', D('capacity','0')), min:0, row:'hc',
+            hint:'월별 독립 카운트. 차면 재등록 링크도 막힘(선착순).' },
           PAY_METHODS_FIELD(E.pay_methods),
         ],
         submitLabel: editing ? 'GX 수정' : 'GX 등록',
-        onSubmit: async (data) => submitProduct({ ...data, id: E.id||0, category:'gx',
-          price: parseInt(data.price)||0, capacity: parseInt(data.capacity)||20,
-          min_headcount: parseInt(data.min_headcount)||0, max_headcount: parseInt(data.max_headcount)||0,
-          pass_type: data.pass_type||'count', pass_count: parseInt(data.pass_count)||0,
-          pass_days: parseInt(data.pass_days)||30, prorate: parseInt(data.prorate)||0,
-          pay_methods: (data.pay_methods||[]).join(',') }),
+        onSubmit: async (data) => {
+          const bits = (data.weekdays||[]).slice().sort();
+          const maxhc = parseInt(data.max_headcount)||0;
+          return submitProduct({ ...data, id: E.id||0, category:'gx',
+            price: parseInt(data.price)||0,
+            unit_price: parseInt(data.unit_price)||0,
+            weekday_bits: bits.join(','),
+            days: bits.map(b=>['월','화','수','목','금','토','일'][parseInt(b)]).join('') || (data.days||''),
+            capacity: maxhc||20,
+            min_headcount: parseInt(data.min_headcount)||0, max_headcount: maxhc,
+            pass_type: data.pass_type||'count', pass_count: parseInt(data.pass_count)||0,
+            pass_days: parseInt(data.pass_days)||30, prorate: 1,
+            pay_methods: (data.pay_methods||[]).join(',') });
+        },
       });
     } else if (category === 'lesson') {
       createModal({

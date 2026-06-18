@@ -1375,6 +1375,8 @@ class ProductBody(BaseModel):
     pass_count:      int = 0
     pass_days:       int = 30
     prorate:         int = 0         # GX 가변요금 토글
+    unit_price:      int = 0         # GX 1회 단가(횟수권)
+    weekday_bits:    str = ""        # GX 운영요일 '0,2,4'(월0..일6)
     pay_methods:     str = ""        # 허용 결제수단(쉼표). 빈값=전체
 
 
