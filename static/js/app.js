@@ -1094,6 +1094,11 @@
             <input id="ef-idnum" value="${e.id_number || ''}" placeholder="여러 지점 근무 시 동일 입력"></label>
           <label>정산요율 % <span style="font-weight:400;color:var(--ink3)">(트레이너/프로 %상품)</span>
             <input id="ef-comm" type="number" step="0.1" value="${e.commission_percent || 0}"></label>
+          <label>고용형태 <span style="font-weight:400;color:var(--ink3)">(트레이너/프로)</span>
+            <select id="ef-worktype">
+              <option value="commute" ${(e.work_type||'commute')==='commute'?'selected':''}>출퇴근형 (기본급+수업료)</option>
+              <option value="freelance" ${e.work_type==='freelance'?'selected':''}>프리랜서형 (수업료만)</option>
+            </select></label>
         </div>
         <div style="margin-top:14px">
           <div style="font-weight:700;margin-bottom:6px">CRM 직무 <span style="font-weight:400;color:var(--ink3)">(이 지점 기준 · 최대 2개)</span></div>
@@ -1120,6 +1125,7 @@
       base_salary: parseInt(v('salary')) || 0, dependents: parseInt(v('dep')) || 1,
       phone: v('phone'), email: v('email'), join_date: v('join'),
       id_number: v('idnum'), commission_percent: parseFloat(v('comm')) || 0,
+      work_type: document.getElementById('ef-worktype').value,
       roles };
     if (!body.name) { showToast('이름을 입력하세요', 'err'); return; }
     const r = await api('/api/employees', { method: 'POST', body: JSON.stringify(body) });

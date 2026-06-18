@@ -561,6 +561,14 @@ def upsert_employee(data: dict) -> int:
             (float(data.get("commission_percent") or 0), emp_id),
         )
 
+    # work_type (트레이너/프로 고용형태: commute|freelance)
+    if data.get("work_type"):
+        try:
+            conn.execute("UPDATE employees SET work_type=? WHERE id=?",
+                         (data["work_type"], emp_id))
+        except Exception:
+            pass
+
     # person_uid 채우기: 주민번호 우선, 없으면 단독키 'EMP{id}'
     idnum = (data.get("id_number", "") or "").strip()
     desired_puid = idnum or f"EMP{emp_id}"
