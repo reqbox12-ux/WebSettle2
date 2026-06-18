@@ -42,3 +42,15 @@ services:
     volumes:
       - ${DB_DIR:-./data}:/app/data
       - ${BACKUP_DIR:-./backups}:/app/backups
+
+  # Cloudflare 터널 (도메인 연결). 토큰은 .env의 CF_TUNNEL_TOKEN.
+  # network_mode host 라야 localhost:8502/8503 에 접근 가능.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: websettle2-cloudflared
+    restart: unless-stopped
+    network_mode: host
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    depends_on:
+      - erp
+      - crm
