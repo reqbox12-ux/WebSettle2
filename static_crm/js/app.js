@@ -2557,30 +2557,55 @@
     const items = r && r.ok ? await r.json() : [];
     const el = document.getElementById('shop-list');
     if (!el) return;
-    el.innerHTML = `<div class="grid-3">
-      ${items.map(p => {
-        // 가변요금 GX면 현재 청구가(current_charge) 기준, 아니면 정가
-        const base = (p.category==='gx' && p.prorate && p.current_charge!=null) ? p.current_charge : (p.price||0);
-        const vat = Math.round(base*1.1);
-        let detail = '';
-        if (p.category==='gx') {
-          detail = `<div style="font-size:12px;color:var(--muted)">${p.days||'매일'} ${p.start_time||''}~${p.end_time||''}<br>강사 ${p.instructor_name||'미정'} · ${p.pass_type==='period'?(p.pass_days+'일권'):(p.pass_count+'회권')}</div>`;
-          if (p.prorate && p.remaining_sessions!=null) detail += `<div style="font-size:11.5px;color:var(--accent);margin-top:4px">⏱ 이번 달 남은 ${p.remaining_sessions}/${p.total_sessions}회 · 일할 적용</div>`;
-        }
-        else if (p.category==='lesson') detail = `<div style="font-size:12px;color:var(--muted)">${p.lesson_type||''} · ${p.sessions||0}회</div>`;
-        return `<div class="card" style="padding:18px 20px">
+    const cards = [];
+    items.forEach(p => {
+      const meta = (p.category==='gx')
+        ? `<div style="font-size:12px;color:var(--muted)">${p.days||'매일'} ${p.start_time||''}~${p.end_time||''}<br>강사 ${p.instructor_name||'미정'} · ${p.pass_type==='period'?(p.pass_days+'일권'):(p.pass_count+'회권')}</div>`
+        : (p.category==='lesson' ? `<div style="font-size:12px;color:var(--muted)">${p.lesson_type||''} · ${p.sessions||0}회</div>` : '');
+
+      if (p.category==='gx' && Array.isArray(p.offers) && p.offers.length) {
+        // 당월/다음달 오퍼별 카드
+        p.offers.forEach(o => {
+          const vat = Math.round((o.charge||0)*1.1);
+          const full = o.full;
+          const waitMode = (o.min>0 && o.status!=='running' && (o.enrolled+o.waiting) < o.min);
+          let badge = '';
+          if (o.label) badge = `<span style="font-size:11px;font-weight:800;padding:2px 8px;border-radius:10px;background:var(--accent);color:#fff">${o.label}</span>`;
+          let hcLine = `<div style="font-size:11.5px;color:var(--muted);margin-top:4px">👥 ${o.enrolled}${o.max?'/'+o.max:''}명${o.min?` · 최소 ${o.min}명`:''}${o.status==='running'?' · <span style="color:var(--ok,#16a34a)">개강확정</span>':(waitMode?' · 대기모집중':'')}</div>`;
+          let detail = `<div style="font-size:11.5px;color:var(--accent);margin-top:4px">⏱ ${o.label} ${o.remaining}회분 · 일할 적용</div>` + hcLine;
+          const btn = full
+            ? `<button class="btn" style="width:100%" disabled>정원 마감</button>`
+            : (waitMode
+                ? `<button class="btn" style="width:100%" onclick="buyProduct(${p.id},'${o.target_ym}')">개강 대기 신청</button>`
+                : `<button class="btn primary" style="width:100%" onclick="buyProduct(${p.id},'${o.target_ym}')">구매하기</button>`);
+          cards.push(`<div class="card" style="padding:18px 20px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <div style="font-size:15px;font-weight:800">${p.name}</div>${badge}</div>
+            ${meta}${detail}
+            <div style="font-size:20px;font-weight:900;color:var(--accent);margin:10px 0">${vat.toLocaleString()}원</div>
+            ${btn}
+          </div>`);
+        });
+      } else {
+        const base = p.price||0, vat = Math.round(base*1.1);
+        cards.push(`<div class="card" style="padding:18px 20px">
           <div style="font-size:15px;font-weight:800;margin-bottom:6px">${p.name}</div>
-          ${detail}
+          ${meta}
           <div style="font-size:20px;font-weight:900;color:var(--accent);margin:10px 0">${vat.toLocaleString()}원</div>
           <button class="btn primary" style="width:100%" onclick="buyProduct(${p.id})">구매하기</button>
-        </div>`;
-      }).join('') || '<div class="empty" style="grid-column:1/-1">판매 중인 항목이 없습니다</div>'}
+        </div>`);
+      }
+    });
+    el.innerHTML = `<div class="grid-3">
+      ${cards.join('') || '<div class="empty" style="grid-column:1/-1">판매 중인 항목이 없습니다</div>'}
     </div>`;
     if (window.lucide) lucide.createIcons();
   }
 
-  window.buyProduct = async function (pid) {
-    const r = await api('/api/my/buy', { method:'POST', body: JSON.stringify({ product_id: pid }) });
+  window.buyProduct = async function (pid, targetYm) {
+    const body = { product_id: pid };
+    if (targetYm) body.target_ym = targetYm;
+    const r = await api('/api/my/buy', { method:'POST', body: JSON.stringify(body) });
     const d = await r?.json().catch(()=>({}));
     if (!r?.ok) { showToast(d.detail||'구매 실패', 'err'); return; }
     if (d.applied) { alert(d.msg); return; }   // GX 개강대기

@@ -2137,18 +2137,39 @@ async def api_my_products(request: Request, category: str = ""):
     q += " ORDER BY category, name"
     rows = _rows(conn.execute(q, args))
     conn.close()
-    from domains.branch_app.pay_sms import gx_current_price
+    from domains.branch_app.pay_sms import gx_price, gx_headcounts, gx_visible_yms
+    vis = gx_visible_yms()
+    YM_LABEL = {vis["current_ym"]: "이번 달", vis["next_ym"]: "다음 달"}
     for p in rows:
-        if p.get("category") == "gx" and p.get("prorate"):
-            info = gx_current_price(p)
-            p["current_charge"] = info["charge"]
-            p["remaining_sessions"] = info["remaining"]
-            p["total_sessions"] = info["total"]
+        if p.get("category") == "gx":
+            offers = []
+            for ym in vis["shop_yms"]:            # 1~23일=당월만, 24~말일=당월+다음달
+                info = gx_price(p, ym)
+                hc = gx_headcounts(p["id"], ym)
+                offers.append({
+                    "target_ym": ym,
+                    "label": YM_LABEL.get(ym, ym),
+                    "charge": info["charge"],
+                    "remaining": info["remaining"],
+                    "total": info["total"],
+                    "is_current": info["is_current"],
+                    "dates": info["dates"],
+                    "enrolled": hc["enrolled"], "waiting": hc["waiting"],
+                    "min": hc["min"], "max": hc["max"],
+                    "status": hc["status"], "full": hc["full"],
+                })
+            p["offers"] = offers
+            # 하위호환 필드(첫 오퍼=당월)
+            if offers:
+                p["current_charge"] = offers[0]["charge"]
+                p["remaining_sessions"] = offers[0]["remaining"]
+                p["total_sessions"] = offers[0]["total"]
     return rows
 
 
 class SelfBuyBody(BaseModel):
     product_id: int
+    target_ym:  str = ""    # 비면 당월 (gx_visible_yms 검증)
 
 
 @app.post("/api/my/buy")
@@ -2156,7 +2177,8 @@ async def api_my_buy(request: Request, body: SelfBuyBody):
     """회원 셀프구매 — 주문 생성 후 결제 토큰 반환. GX 최소인원 미달이면 신청만."""
     user = require_member(request)
     from domains.branch_app.crm_ext import get_product, charge_amount
-    from domains.branch_app.pay_sms import create_order, gx_apply, gx_headcounts
+    from domains.branch_app.pay_sms import (create_order, gx_apply, gx_headcounts,
+                                            gx_price, gx_visible_yms)
     product = get_product(body.product_id)
     if not product or not product.get("is_active"):
         raise HTTPException(status_code=404, detail="상품을 찾을 수 없습니다")
@@ -2169,35 +2191,44 @@ async def api_my_buy(request: Request, body: SelfBuyBody):
     conn.close()
     mphone = mrow[0] if mrow else ""
 
-    # GX 최소개강 인원 체크
+    vis = gx_visible_yms()
+    tym = body.target_ym or vis["current_ym"]
+    # shop 노출 규칙 검증: 일반 회원은 shop_yms 내 월만 구매 가능 (다음달은 24일~)
+    if product.get("category") == "gx" and tym not in vis["shop_yms"]:
+        raise HTTPException(status_code=400, detail="현재 구매할 수 없는 월입니다")
+
+    # GX 최소개강 인원 체크 (월별 독립)
     if product.get("category") == "gx":
-        hc = gx_headcounts(product["id"])
-        if hc["min"] > 0 and (hc["enrolled"] + hc["waiting"] + 1) < hc["min"]:
+        hc = gx_headcounts(product["id"], tym)
+        # 이미 정원 마감
+        if hc["max"] and hc["enrolled"] >= hc["max"]:
+            raise HTTPException(status_code=400, detail="정원이 마감되었습니다")
+        # 최소인원 미달 + 아직 '진행' 확정 전이면 대기신청만
+        if hc["min"] > 0 and hc["status"] != "running" \
+           and (hc["enrolled"] + hc["waiting"] + 1) < hc["min"]:
             gx_apply(branch=br, gx_product_id=product["id"], member_id=mid,
-                     member_name=mname, member_phone=mphone)
+                     member_name=mname, member_phone=mphone, target_ym=tym)
             need = hc["min"] - (hc["enrolled"] + hc["waiting"] + 1)
             return {"applied": True,
                     "msg": f"개강 대기 신청 완료! 최소 개강 인원까지 {need}명 남았습니다. "
                            f"인원이 충족되면 결제 안내 문자를 보내드립니다."}
-        if hc["max"] and hc["enrolled"] >= hc["max"]:
-            raise HTTPException(status_code=400, detail="정원이 마감되었습니다")
 
-    # GX 가변요금이면 남은 회차 기준 청구
+    # GX 월별 요금 계산
     base = product.get("price", 0)
     pname = product["name"]
-    if product.get("category") == "gx" and product.get("prorate"):
-        from domains.branch_app.pay_sms import gx_current_price
-        info = gx_current_price(product)
+    if product.get("category") == "gx":
+        info = gx_price(product, tym)
         if info["remaining"] <= 0:
-            raise HTTPException(status_code=400, detail="이번 달 남은 수업이 없습니다")
+            raise HTTPException(status_code=400, detail="해당 월 남은 수업이 없습니다")
         base = info["charge"]
-        pname = f"{product['name']} ({info['remaining']}회분)"
+        lbl = "다음 달" if not info["is_current"] else "이번 달"
+        pname = f"{product['name']} ({lbl} {info['remaining']}회분)"
     amount = charge_amount(base, "토스")   # 셀프구매는 토스(카드) → VAT 가산
     order = create_order(
         branch=br, member_id=mid, member_name=mname, member_phone=mphone,
         product_id=product["id"], product_name=pname,
         category=product.get("category", ""), base_amount=base, amount=amount,
-        pay_method="토스", channel="self", created_by="")
+        pay_method="토스", channel="self", created_by="", target_ym=tym)
     return {"applied": False, "token": order["token"],
             "link": f"{_base_url(request)}/p/{order['token']}"}
 
