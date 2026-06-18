@@ -319,6 +319,11 @@ def init_branch_tables():
         if sets:
             conn.execute(f"UPDATE members SET {','.join(sets)} WHERE id=?", (*args, mid))
     conn.commit()
+
+    # 기존 회원 강제 비번변경 전환: 아직 PIN만 쓰는(정식 비번 미설정) 회원만 1회 플래그
+    conn.execute("""UPDATE members SET must_change_pw=1
+                    WHERE (pin_hash IS NULL OR pin_hash='') AND COALESCE(must_change_pw,0)=0""")
+    conn.commit()
     conn.close()
 
 
