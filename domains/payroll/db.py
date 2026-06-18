@@ -919,10 +919,32 @@ def get_insurance_actuals_by_branch(year: int, month: int) -> list[dict]:
 # ── 이메일 로그 ──────────────────────────────────────────────
 # ── 직원 계정 (랜딩페이지 로그인) ────────────────────────────
 import hashlib as _hashlib
+import bcrypt as _bcrypt
 
 
 def _hash_pw(pw: str) -> str:
+    """비밀번호 해싱 — bcrypt(솔트 포함)."""
+    return _bcrypt.hashpw(str(pw).strip().encode("utf-8"), _bcrypt.gensalt()).decode()
+
+
+def _legacy_sha256(pw: str) -> str:
     return _hashlib.sha256(str(pw).strip().encode("utf-8")).hexdigest()
+
+
+def _verify_pw(pw: str, stored: str) -> bool:
+    """bcrypt 우선, 구형 SHA-256 해시도 검증(하위호환)."""
+    if not stored:
+        return False
+    if stored.startswith("$2"):       # bcrypt
+        try:
+            return _bcrypt.checkpw(str(pw).strip().encode("utf-8"), stored.encode())
+        except Exception:
+            return False
+    return _legacy_sha256(pw) == stored   # 레거시
+
+
+def _is_legacy_hash(stored: str) -> bool:
+    return bool(stored) and not stored.startswith("$2")
 
 
 def create_employee_account(employee_id: int, username: str, default_pw: str) -> tuple[bool, str]:
@@ -967,32 +989,35 @@ def get_all_employee_accounts() -> list[dict]:
 
 
 def verify_employee_login(username: str, password: str) -> dict | None:
-    """로그인 검증. 성공 시 직원 정보 반환, 실패 시 None"""
+    """로그인 검증. 성공 시 직원 정보 반환, 실패 시 None.
+    bcrypt/레거시 SHA-256 모두 검증하고, 레거시면 로그인 성공 시 bcrypt로 업그레이드."""
     conn = get_conn()
     try:
-        pw_hash = _hash_pw(password)
         row = conn.execute("""
-            SELECT ea.employee_id, ea.must_change_pw, ea.is_active,
+            SELECT ea.employee_id, ea.must_change_pw, ea.is_active, ea.password_hash,
                    e.name, e.branch, e.emp_type, e.email, e.phone,
                    e.work_start, e.work_end, e.hourly_rate, ea.username
             FROM employee_accounts ea
             JOIN employees e ON ea.employee_id = e.id
-            WHERE ea.username=? AND ea.password_hash=? AND ea.is_active=1 AND e.is_active=1
-        """, (username.strip(), pw_hash)).fetchone()
-        if row:
-            conn.execute(
-                "UPDATE employee_accounts SET last_login=datetime('now','localtime') WHERE employee_id=?",
-                (row[0],)
-            )
-            conn.commit()
-            return {
-                "employee_id": row[0], "must_change_pw": bool(row[1]),
-                "name": row[3], "branch": row[4], "emp_type": row[5],
-                "email": row[6] or "", "phone": row[7] or "",
-                "work_start": row[8] or "09:00", "work_end": row[9] or "18:00",
-                "hourly_rate": row[10] or 0, "username": row[11],
-            }
-        return None
+            WHERE ea.username=? AND ea.is_active=1 AND e.is_active=1
+        """, (username.strip(),)).fetchone()
+        if not row or not _verify_pw(password, row[3]):
+            return None
+        # 레거시 해시면 bcrypt로 업그레이드
+        if _is_legacy_hash(row[3]):
+            conn.execute("UPDATE employee_accounts SET password_hash=? WHERE employee_id=?",
+                         (_hash_pw(password), row[0]))
+        conn.execute(
+            "UPDATE employee_accounts SET last_login=datetime('now','localtime') WHERE employee_id=?",
+            (row[0],))
+        conn.commit()
+        return {
+            "employee_id": row[0], "must_change_pw": bool(row[1]),
+            "name": row[4], "branch": row[5], "emp_type": row[6],
+            "email": row[7] or "", "phone": row[8] or "",
+            "work_start": row[9] or "09:00", "work_end": row[10] or "18:00",
+            "hourly_rate": row[11] or 0, "username": row[12],
+        }
     finally:
         conn.close()
 
