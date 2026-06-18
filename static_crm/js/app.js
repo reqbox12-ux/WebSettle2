@@ -86,6 +86,7 @@
     payroll:     { label: '페이롤',   icon: 'wallet',     staffOnly: true,  allowedRoles: ['trainer','golf_pro','gx','manager'] },
     payments:    { label: '결제현황', icon: 'credit-card',staffOnly: true,  allowedRoles: ['info','manager'] },
     sms:         { label: '문자발송', icon: 'message-square',staffOnly: true, allowedRoles: ['manager'] },
+    coupons:     { label: '쿠폰',     icon: 'ticket',     staffOnly: true,  allowedRoles: ['manager'] },
     approvals:   { label: '결재함',   icon: 'inbox',      staffOnly: true,  allowedRoles: ['manager'] },
     settings:    { label: '설정',     icon: 'settings-2', staffOnly: true,  allowedRoles: ['manager'] },
     shop:        { label: '수업·상품 구매', icon: 'shopping-bag', staffOnly: false, allowedRoles: [], memberOnly: true },
@@ -468,11 +469,112 @@
       case 'sms':         await renderSms(container);         break;
       case 'settings':    await renderSettings(container);    break;
       case 'shop':        await renderShop(container);        break;
+      case 'coupons':     await renderCoupons(container);     break;
       case 'approvals':   await renderApprovals(container);   break;
       default:            container.innerHTML = '<div class="page"><div class="empty">페이지 없음</div></div>';
     }
     if (window.lucide) lucide.createIcons();
   }
+
+  // ── 쿠폰 관리 ─────────────────────────────────────────────────
+  async function renderCoupons(container) {
+    container.innerHTML = '<div class="page"><div class="empty">쿠폰 로딩 중…</div></div>';
+    const r = await api('/api/coupons');
+    const list = r && r.ok ? await r.json() : [];
+    const rows = list.map(c => {
+      const disc = c.discount_type === 'percent' ? `${c.discount_value}%` : `${(c.discount_value||0).toLocaleString()}원`;
+      const valid = c.validity_type === 'permanent' ? '영구'
+        : (c.valid_days ? `발급+${c.valid_days}일` : `${c.valid_from||''}~${c.valid_to||''}`);
+      const scope = (!c.apply_scope || c.apply_scope==='all') ? '전체' : c.apply_scope;
+      return `<tr>
+        <td style="text-align:left"><b>${c.name}</b>${c.branch==='all'?' <span class="badge outline">전지점</span>':''}</td>
+        <td>${disc}</td><td>${valid}</td><td>${scope}</td>
+        <td>${c.min_amount?c.min_amount.toLocaleString()+'원~':'—'}</td>
+        <td><span class="badge ${c.is_active?'ok':'outline'}">${c.is_active?'활성':'중지'}</span></td>
+        <td style="white-space:nowrap">
+          <button class="btn sm primary" onclick="issueCouponAll(${c.id})">전체지급</button>
+          <button class="btn sm" onclick="issueCouponSel(${c.id})">선택지급</button>
+          <button class="btn sm" onclick="delCoupon(${c.id})">🗑️</button></td>
+      </tr>`;
+    }).join('');
+    container.innerHTML = `
+      <div class="page"><div class="card">
+        <div class="card-head"><div class="card-title">쿠폰 ${list.length}개</div>
+          <button class="btn primary sm" onclick="modalNewCoupon()"><i data-lucide="plus"></i> 쿠폰 만들기</button></div>
+        <table class="table">
+          <thead><tr><th>이름</th><th>할인</th><th>유효기간</th><th>적용범위</th><th>최소금액</th><th>상태</th><th></th></tr></thead>
+          <tbody>${rows || '<tr><td colspan="7" style="text-align:center;color:var(--muted)">쿠폰 없음</td></tr>'}</tbody>
+        </table>
+        <div style="font-size:12px;opacity:.6;margin-top:6px">이벤트에 쿠폰 연결은 운영관리 → 이벤트에서, 회원은 쿠폰함에서 결제 시 선택합니다.</div>
+      </div></div>`;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  window.modalNewCoupon = function () {
+    createModal({
+      title: '쿠폰 만들기', size:'lg',
+      fields: [
+        { id:'name', label:'쿠폰 이름', type:'text', required:true, placeholder:'예: 신규가입 1만원' },
+        { id:'discount_type', label:'할인 형식', type:'radio',
+          options:[{value:'amount',label:'정액(원)'},{value:'percent',label:'정률(%)'}], default:'amount' },
+        { id:'discount_value', label:'할인 값 (원 또는 %)', type:'number', required:true },
+        { id:'validity_type', label:'유효기간', type:'radio',
+          options:[{value:'permanent',label:'영구'},{value:'period',label:'기간'}], default:'permanent' },
+        { id:'valid_days', label:'기간(발급+N일, 기간형일 때)', type:'number', placeholder:'예: 30' },
+        { id:'apply_scope', label:'적용 범위', type:'select',
+          options:[{value:'all',label:'전체'},{value:'lesson',label:'레슨/PT'},{value:'gx',label:'GX'},
+                   {value:'lesson,gx',label:'레슨+GX (단품 제외)'},{value:'goods',label:'단품(goods)'}], default:'lesson,gx' },
+        { id:'min_amount', label:'최소 결제금액 (선택)', type:'number' },
+        { id:'scope_all', label:'전 지점 공통', type:'radio',
+          options:[{value:'1',label:'전 지점'},{value:'0',label:'이 지점만'}], default:'1' },
+      ],
+      submitLabel:'쿠폰 생성',
+      onSubmit: async (data) => {
+        const body = { name:data.name, discount_type:data.discount_type,
+          discount_value: parseInt(data.discount_value)||0, validity_type:data.validity_type,
+          valid_days: parseInt(data.valid_days)||0, apply_scope:data.apply_scope,
+          min_amount: parseInt(data.min_amount)||0, per_member_once:1,
+          scope_all: data.scope_all==='1' };
+        const r = await api('/api/coupons', { method:'POST', body: JSON.stringify(body) });
+        if (!r?.ok) throw new Error('생성 실패');
+        showToast('쿠폰이 생성되었습니다'); renderCoupons(document.getElementById('page-content'));
+      }
+    });
+  };
+  window.delCoupon = async function (id) {
+    if (!confirm('이 쿠폰을 중지할까요? (이미 지급된 쿠폰은 유지)')) return;
+    const r = await api(`/api/coupons/${id}`, { method:'DELETE' });
+    if (r?.ok) { showToast('중지되었습니다'); renderCoupons(document.getElementById('page-content')); }
+  };
+  window.issueCouponAll = async function (id) {
+    if (!confirm('이 지점(또는 전 지점) 전체 회원에게 지급할까요?')) return;
+    const r = await api(`/api/coupons/${id}/issue-all`, { method:'POST' });
+    const d = r ? await r.json().catch(()=>({})) : {};
+    if (r?.ok) showToast(`✅ ${d.issued}명에게 지급`);
+  };
+  window.issueCouponSel = async function (id) {
+    const r = await api(`/api/members?branch=${encodeURIComponent(user.branch||'')}`);
+    const members = r && r.ok ? await r.json() : [];
+    if (!members.length) { showToast('회원이 없습니다','err'); return; }
+    const checks = members.map(m => `<label style="display:block;padding:4px 0">
+      <input type="checkbox" class="cp-mem" value="${m.id}"> ${m.name} (${m.phone||''})</label>`).join('');
+    closeModal();
+    const ov = document.createElement('div'); ov.className='modal-overlay'; ov.id='modal-overlay';
+    ov.addEventListener('click', e=>{ if(e.target===ov) closeModal(); });
+    ov.innerHTML = `<div class="modal"><div class="modal-header"><div class="modal-title">선택 회원 지급</div>
+      <button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body" style="max-height:60vh;overflow:auto">${checks}</div>
+      <div class="modal-footer"><button class="btn" onclick="closeModal()">취소</button>
+      <button class="btn primary" onclick="doIssueSel(${id})">지급</button></div></div>`;
+    document.body.appendChild(ov);
+  };
+  window.doIssueSel = async function (id) {
+    const ids = [...document.querySelectorAll('.cp-mem:checked')].map(b=>parseInt(b.value));
+    if (!ids.length) { showToast('회원을 선택하세요','err'); return; }
+    const r = await api(`/api/coupons/${id}/issue-members`, { method:'POST', body: JSON.stringify({ member_ids: ids }) });
+    const d = r ? await r.json().catch(()=>({})) : {};
+    if (r?.ok) { showToast(`✅ ${d.issued}명 지급`); closeModal(); }
+  };
 
   // ── 결재함 ────────────────────────────────────────────────────
   const APPROVAL_TYPE_LBL = {
@@ -1035,7 +1137,7 @@
     if (user.role === 'member') return renderMemberHome(container);
     container.innerHTML = '<div class="page"><div class="empty">홈 로딩 중…</div></div>';
     try {
-      const resp = await api('/api/home/data');
+      const resp = await api('/api/home/data?branch=' + encodeURIComponent(user.branch || ''));
       if (!resp) return;
       const data = await resp.json();
       const { announcements = [], events = [], classes = [] } = data;
@@ -1094,7 +1196,51 @@
     if (window.lucide) lucide.createIcons();
   }
 
-  window.openEvent = function (id) { showToast('이벤트 상세보기 준비 중'); };
+  window.openEvent = async function (id) {
+    const r = await api(`/api/operations/events/${id}`);
+    if (!r?.ok) { showToast('이벤트를 불러올 수 없습니다','err'); return; }
+    const e = await r.json();
+    const comments = (e.comments || []).map(c => `
+      <div style="padding:8px 0;border-bottom:1px solid rgba(128,128,128,.15)">
+        <div style="font-size:12px;opacity:.6">${c.author||'익명'} · ${(c.created_at||'').slice(0,16)}</div>
+        <div style="font-size:14px;margin-top:2px">${(c.content||'').replace(/</g,'&lt;')}</div>
+      </div>`).join('') || '<div style="font-size:13px;opacity:.6;padding:8px 0">첫 댓글을 남겨보세요</div>';
+    closeModal();
+    const ov = document.createElement('div');
+    ov.className = 'modal-overlay'; ov.id = 'modal-overlay';
+    ov.addEventListener('click', ev => { if (ev.target === ov) closeModal(); });
+    ov.innerHTML = `
+      <div class="modal modal-lg">
+        <div class="modal-header"><div class="modal-title">${e.eyebrow?`<span class="badge red">${e.eyebrow}</span> `:''}${e.title}</div>
+          <button class="modal-close" onclick="closeModal()">✕</button></div>
+        <div class="modal-body" style="max-height:72vh;overflow:auto">
+          ${e.image_path?`<img src="${e.image_path}" style="width:100%;border-radius:14px;margin-bottom:12px">`:''}
+          ${e.ends_at?`<div style="font-size:12.5px;opacity:.7;margin-bottom:8px">📅 ~${e.ends_at}까지</div>`:''}
+          <div style="font-size:14.5px;line-height:1.7;white-space:pre-wrap;margin-bottom:18px">${(e.content||'').replace(/</g,'&lt;')}</div>
+          ${(user.role==='member' && e.coupon_id) ? `<button class="btn primary" style="width:100%;margin-bottom:16px" onclick="claimCoupon(${id})">🎟️ 쿠폰 받기</button>` : ''}
+          <div style="font-weight:700;margin-bottom:6px">댓글 ${(e.comments||[]).length}</div>
+          <div id="ev-comments">${comments}</div>
+          <div style="display:flex;gap:6px;margin-top:10px">
+            <input id="ev-comment-input" class="inp" style="flex:1" placeholder="댓글을 입력하세요" maxlength="300">
+            <button class="btn primary" onclick="postEventComment(${id})">등록</button>
+          </div>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+  };
+  window.claimCoupon = async function (eventId) {
+    const r = await api(`/api/operations/events/${eventId}/claim-coupon`, { method:'POST' });
+    const d = r ? await r.json().catch(()=>({})) : {};
+    if (r?.ok) showToast('🎟️ ' + (d.msg||'쿠폰을 받았습니다'));
+    else showToast(d.detail || '쿠폰 받기 실패','err');
+  };
+  window.postEventComment = async function (id) {
+    const el = document.getElementById('ev-comment-input');
+    const content = (el.value||'').trim();
+    if (!content) return;
+    const r = await api(`/api/operations/events/${id}/comment`, { method:'POST', body: JSON.stringify({ content }) });
+    if (r?.ok) { openEvent(id); } else showToast('댓글 등록 실패','err');
+  };
 
   // ── 회원 단순 랜딩 ────────────────────────────────────────────
   async function renderMemberHome(container) {
@@ -1117,10 +1263,37 @@
         </div>
         <button class="btn primary" style="width:100%;height:52px;font-size:16px;margin-top:6px"
           onclick="navigateTo('shop')"><i data-lucide="shopping-bag"></i> 전체 상품 보기</button>
+        <button class="btn" style="width:100%;height:46px;font-size:15px;margin-top:8px"
+          onclick="openMyCoupons()"><i data-lucide="ticket"></i> 내 쿠폰함</button>
         <div id="member-lessons-slot"></div>
       </div>`;
     if (window.lucide) lucide.createIcons();
   }
+
+  window.openMyCoupons = async function () {
+    const r = await api('/api/my/coupons');
+    const list = r && r.ok ? await r.json() : [];
+    const body = list.length ? list.map(c => {
+      const disc = c.discount_type === 'percent' ? `${c.discount_value}%` : `${(c.discount_value||0).toLocaleString()}원`;
+      const st = c.status==='available'?'<span class="badge ok">사용가능</span>'
+        : c.status==='used'?'<span class="badge outline">사용완료</span>':'<span class="badge outline">만료</span>';
+      return `<div style="padding:12px;border:1px solid rgba(128,128,128,.2);border-radius:12px;margin-bottom:8px;
+        ${c.status!=='available'?'opacity:.5':''}">
+        <div style="display:flex;justify-content:space-between;align-items:center">
+          <b>${c.name}</b>${st}</div>
+        <div style="font-size:13px;margin-top:4px">${disc} 할인 · ${c.expires_at?('~'+c.expires_at):'기간 제한 없음'}</div>
+        <div style="font-size:11px;opacity:.6;margin-top:2px">적용: ${(!c.apply_scope||c.apply_scope==='all')?'전체':c.apply_scope}${c.min_amount?` · ${c.min_amount.toLocaleString()}원 이상`:''}</div>
+      </div>`;
+    }).join('') : '<div class="empty" style="padding:24px">보유한 쿠폰이 없습니다</div>';
+    closeModal();
+    const ov = document.createElement('div'); ov.className='modal-overlay'; ov.id='modal-overlay';
+    ov.addEventListener('click', e=>{ if(e.target===ov) closeModal(); });
+    ov.innerHTML = `<div class="modal"><div class="modal-header"><div class="modal-title">🎟️ 내 쿠폰함</div>
+      <button class="modal-close" onclick="closeModal()">✕</button></div>
+      <div class="modal-body" style="max-height:65vh;overflow:auto">${body}
+      <div style="font-size:12px;opacity:.6;margin-top:8px">결제 시 사용 가능한 쿠폰이 자동으로 표시됩니다.</div></div></div>`;
+    document.body.appendChild(ov);
+  };
   window.goShop = function (cat) { _shopCat = cat; navigateTo('shop'); };
 
   // ── GPS 위치 취득 ─────────────────────────────────────────────
@@ -1515,16 +1688,19 @@
             <button class="btn primary sm" onclick="modalNewEvent()"><i data-lucide="plus"></i> 이벤트 추가</button>
           </div>
           <table class="table">
-            <thead><tr><th>제목</th><th>태그</th><th>마감일</th><th>활성</th><th>등록일</th></tr></thead>
+            <thead><tr><th>제목</th><th>태그</th><th>마감일</th><th>활성</th><th>등록일</th><th></th></tr></thead>
             <tbody>
               ${items.map(i => `
                 <tr>
-                  <td><b>${i.title}</b></td>
+                  <td><b>${i.title}</b>${i.branch==='all'?' <span class="badge outline">전지점</span>':''}</td>
                   <td><span class="badge outline">${i.eyebrow||'—'}</span></td>
                   <td>${i.ends_at||'—'}</td>
                   <td><span class="badge ${i.is_active?'ok':'outline'}">${i.is_active?'활성':'비활성'}</span></td>
                   <td>${i.created_at?i.created_at.slice(0,10):''}</td>
-                </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted)">이벤트 없음</td></tr>'}
+                  <td style="white-space:nowrap">
+                    <button class="btn sm" onclick="modalEditEvent(${i.id})">수정</button>
+                    <button class="btn sm" onclick="delEvent(${i.id})">🗑️</button></td>
+                </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted)">이벤트 없음</td></tr>'}
             </tbody>
           </table>`;
         if (window.lucide) lucide.createIcons();
@@ -1538,7 +1714,7 @@
             <button class="btn primary sm" onclick="modalNewAnnouncement()"><i data-lucide="plus"></i> 공지 등록</button>
           </div>
           <table class="table">
-            <thead><tr><th>제목</th><th>내용</th><th>우선순위</th><th>대상</th><th>만료일</th></tr></thead>
+            <thead><tr><th>제목</th><th>내용</th><th>우선순위</th><th>대상</th><th>만료일</th><th></th></tr></thead>
             <tbody>
               ${items.map(i => `
                 <tr>
@@ -1547,7 +1723,10 @@
                   <td><span class="badge ${i.priority==='urgent'?'red':'outline'}">${i.priority==='urgent'?'긴급':'일반'}</span></td>
                   <td>${i.target_branch==='all'?'전체':i.target_branch}</td>
                   <td>${i.expires_at||'—'}</td>
-                </tr>`).join('') || '<tr><td colspan="5" style="text-align:center;color:var(--muted)">공지 없음</td></tr>'}
+                  <td style="white-space:nowrap">
+                    <button class="btn sm" onclick='modalEditAnn(${JSON.stringify(i)})'>수정</button>
+                    <button class="btn sm" onclick="delAnn(${i.id})">🗑️</button></td>
+                </tr>`).join('') || '<tr><td colspan="6" style="text-align:center;color:var(--muted)">공지 없음</td></tr>'}
             </tbody>
           </table>`;
         if (window.lucide) lucide.createIcons();
@@ -1673,7 +1852,15 @@
     });
   };
 
-  window.modalNewEvent = function () {
+  async function _loadCouponOptions() {
+    const r = await api('/api/coupons');
+    const list = r && r.ok ? await r.json() : [];
+    return [{value:'0',label:'(연결 안 함)'}].concat(
+      list.filter(c=>c.is_active).map(c=>({ value:String(c.id), label:c.name })));
+  }
+
+  window.modalNewEvent = async function () {
+    const couponOpts = await _loadCouponOptions();
     createModal({
       title: '이벤트 추가',
       size: 'lg',
@@ -1681,24 +1868,62 @@
         { id:'title',   label:'이벤트 제목', type:'text', required:true, placeholder:'예: 여름 특별 GX 이벤트' },
         { id:'eyebrow', label:'태그 (상단 라벨)', type:'text', placeholder:'예: 이벤트 / 프로모션' },
         { id:'content', label:'내용', type:'textarea', rows:4, placeholder:'이벤트 상세 내용을 입력하세요' },
+        { id:'scope',   label:'노출 범위', type:'radio',
+          options:[{value:'branch',label:'이 지점만'},{value:'all',label:'전 지점 공통'}], default:'branch' },
+        { id:'coupon_id', label:'연결 쿠폰 (참여 시 지급)', type:'select', options:couponOpts, default:'0' },
         { id:'ends_at', label:'마감일', type:'date' },
         { id:'image',   label:'이미지', type:'file', accept:'image/*', placeholder:'이미지를 클릭하여 선택 (선택사항)' },
       ],
       submitLabel: '이벤트 등록',
-      onSubmit: async (data, hasFile) => {
+      onSubmit: async (data) => {
         const fd = new FormData();
         fd.append('title',   data.title);
         fd.append('eyebrow', data.eyebrow || '');
         fd.append('content', data.content || '');
         fd.append('ends_at', data.ends_at || '');
-        fd.append('branch',  user.branch || '');
+        fd.append('branch',  data.scope === 'all' ? 'all' : (user.branch || ''));
         if (data.image) fd.append('image', data.image);
         const resp = await apiForm('/api/operations/events', fd);
         if (!resp?.ok) throw new Error('등록 실패');
+        const created = await resp.json().catch(()=>({}));
+        if (data.coupon_id && data.coupon_id !== '0' && created.id) {
+          await api(`/api/operations/events/${created.id}/coupon`, { method:'POST',
+            body: JSON.stringify({ coupon_id: parseInt(data.coupon_id) }) });
+        }
         showToast('이벤트가 등록되었습니다');
         showOpsTab('events');
       }
     });
+  };
+
+  window.modalEditEvent = async function (id) {
+    const r = await api(`/api/operations/events/${id}`);
+    if (!r?.ok) return;
+    const e = await r.json();
+    createModal({
+      title: '이벤트 수정', size:'lg',
+      fields: [
+        { id:'title',   label:'제목', type:'text', required:true, default:e.title },
+        { id:'eyebrow', label:'태그', type:'text', default:e.eyebrow||'' },
+        { id:'content', label:'내용', type:'textarea', rows:4, default:e.content||'' },
+        { id:'ends_at', label:'마감일', type:'date', default:e.ends_at||'' },
+        { id:'is_active', label:'상태', type:'radio',
+          options:[{value:'1',label:'활성'},{value:'0',label:'비활성'}], default:String(e.is_active) },
+      ],
+      submitLabel:'저장',
+      onSubmit: async (data) => {
+        const resp = await api(`/api/operations/events/${id}`, { method:'PATCH',
+          body: JSON.stringify({ title:data.title, eyebrow:data.eyebrow, content:data.content,
+            ends_at:data.ends_at, is_active: parseInt(data.is_active) }) });
+        if (!resp?.ok) throw new Error('수정 실패');
+        showToast('수정되었습니다'); showOpsTab('events');
+      }
+    });
+  };
+  window.delEvent = async function (id) {
+    if (!confirm('이 이벤트를 삭제할까요? (댓글도 함께 삭제)')) return;
+    const r = await api(`/api/operations/events/${id}`, { method:'DELETE' });
+    if (r?.ok) { showToast('삭제되었습니다'); showOpsTab('events'); }
   };
 
   window.modalNewAnnouncement = function () {
@@ -1724,6 +1949,31 @@
         showOpsTab('announcements');
       }
     });
+  };
+
+  window.modalEditAnn = function (a) {
+    createModal({
+      title: '공지 수정',
+      fields: [
+        { id:'title',   label:'제목', type:'text', required:true, default:a.title },
+        { id:'content', label:'내용', type:'textarea', rows:4, default:a.content||'' },
+        { id:'priority', label:'우선순위', type:'radio',
+          options:[{value:'normal',label:'일반'},{value:'urgent',label:'🔴 긴급'}], default:a.priority||'normal' },
+        { id:'target_branch', label:'대상 (all=전체)', type:'text', default:a.target_branch||'all' },
+        { id:'expires_at', label:'만료일', type:'date', default:a.expires_at||'' },
+      ],
+      submitLabel:'저장',
+      onSubmit: async (data) => {
+        const resp = await api(`/api/operations/announcements/${a.id}`, { method:'PATCH', body: JSON.stringify(data) });
+        if (!resp?.ok) throw new Error('수정 실패');
+        showToast('수정되었습니다'); showOpsTab('announcements');
+      }
+    });
+  };
+  window.delAnn = async function (id) {
+    if (!confirm('이 공지를 삭제할까요?')) return;
+    const r = await api(`/api/operations/announcements/${id}`, { method:'DELETE' });
+    if (r?.ok) { showToast('삭제되었습니다'); showOpsTab('announcements'); }
   };
 
   window.modalNewInstructor = function () {

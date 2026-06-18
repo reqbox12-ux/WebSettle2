@@ -43,11 +43,12 @@ def init_crm_ext_tables():
     if "pass_days" not in pcols:
         conn.execute("ALTER TABLE products ADD COLUMN pass_days INTEGER DEFAULT 30")      # 기간권 일수
 
-    # 지점 입금계좌 (계좌이체 안내문자용)
-    bcols = [r[1] for r in conn.execute("PRAGMA table_info(branches)").fetchall()]
-    for col in ("bank", "account_no", "account_holder"):
-        if col not in bcols:
-            conn.execute(f"ALTER TABLE branches ADD COLUMN {col} TEXT DEFAULT ''")
+    # 지점 입금계좌 (계좌이체 안내문자용) — branches 테이블 있을 때만(빈 DB 설치 대비)
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='branches'").fetchone():
+        bcols = [r[1] for r in conn.execute("PRAGMA table_info(branches)").fetchall()]
+        for col in ("bank", "account_no", "account_holder"):
+            if col not in bcols:
+                conn.execute(f"ALTER TABLE branches ADD COLUMN {col} TEXT DEFAULT ''")
 
     # 토스 결제위젯 variantKey
     if conn.execute("SELECT name FROM sqlite_master WHERE name='payment_config'").fetchone():
@@ -99,6 +100,12 @@ def init_crm_ext_tables():
     icols = [r[1] for r in conn.execute("PRAGMA table_info(inventory_items)").fetchall()]
     if icols and "min_qty" not in icols:
         conn.execute("ALTER TABLE inventory_items ADD COLUMN min_qty INTEGER DEFAULT 0")
+
+    # 이벤트 ↔ 쿠폰 연결
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='events'").fetchone():
+        evc = [r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()]
+        if "coupon_id" not in evc:
+            conn.execute("ALTER TABLE events ADD COLUMN coupon_id INTEGER DEFAULT 0")
 
     conn.executescript("""
         -- GX 인원 구간제 인센티브
@@ -380,6 +387,38 @@ def init_crm_ext_tables():
             toss_result   TEXT DEFAULT '',
             refunded_by   TEXT DEFAULT '',
             created_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── 쿠폰 정책 ─────────────────────────────────────────
+        CREATE TABLE IF NOT EXISTS coupons (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch           TEXT DEFAULT 'all',       -- 'all' | 지점명
+            name             TEXT NOT NULL,
+            discount_type    TEXT DEFAULT 'amount',    -- 'amount' | 'percent'
+            discount_value   INTEGER DEFAULT 0,        -- 원 또는 %
+            validity_type    TEXT DEFAULT 'permanent', -- 'permanent' | 'period'
+            valid_from       TEXT DEFAULT '',
+            valid_to         TEXT DEFAULT '',
+            valid_days       INTEGER DEFAULT 0,        -- 발급일+N일(날짜 대신)
+            apply_scope      TEXT DEFAULT 'all',       -- 'all' 또는 'gx,lesson' CSV
+            product_ids      TEXT DEFAULT '',          -- 특정 상품 한정(CSV, 선택)
+            min_amount       INTEGER DEFAULT 0,
+            per_member_once  INTEGER DEFAULT 1,
+            is_active        INTEGER DEFAULT 1,
+            created_at       TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── 회원 쿠폰함 (발급분) ───────────────────────────────
+        CREATE TABLE IF NOT EXISTS member_coupons (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            coupon_id   INTEGER NOT NULL,
+            member_id   INTEGER NOT NULL,
+            branch      TEXT DEFAULT '',
+            status      TEXT DEFAULT 'available',  -- 'available'|'used'|'expired'
+            expires_at  TEXT DEFAULT '',           -- '' = 영구
+            issued_at   TEXT DEFAULT (datetime('now','localtime')),
+            used_at     TEXT,
+            sale_id     INTEGER DEFAULT 0
         );
     """)
     conn.commit()
@@ -896,3 +935,202 @@ def refund_suggestion(paid_amount: int, base_amount: int, total_sessions: int,
     used_value = (int(base_amount or 0) / total_sessions * used_sessions) if total_sessions else 0
     penalty = int(paid_amount or 0) * penalty_rate
     return max(0, round(int(paid_amount or 0) - used_value - penalty))
+
+
+# ══════════════════════════════════════════════════════════════
+#  쿠폰 시스템
+# ══════════════════════════════════════════════════════════════
+from datetime import datetime as _dt, timedelta as _td
+
+
+def create_coupon(data: dict) -> int:
+    conn = get_conn()
+    if data.get("id"):
+        conn.execute("""UPDATE coupons SET name=?, discount_type=?, discount_value=?,
+            validity_type=?, valid_from=?, valid_to=?, valid_days=?, apply_scope=?,
+            product_ids=?, min_amount=?, per_member_once=?, is_active=?, branch=? WHERE id=?""",
+            (data["name"], data.get("discount_type","amount"), int(data.get("discount_value",0)),
+             data.get("validity_type","permanent"), data.get("valid_from",""), data.get("valid_to",""),
+             int(data.get("valid_days",0)), data.get("apply_scope","all") or "all",
+             data.get("product_ids",""), int(data.get("min_amount",0)),
+             int(data.get("per_member_once",1)), int(data.get("is_active",1)),
+             data.get("branch","all"), data["id"]))
+        rid = data["id"]
+    else:
+        cur = conn.execute("""INSERT INTO coupons
+            (branch, name, discount_type, discount_value, validity_type, valid_from, valid_to,
+             valid_days, apply_scope, product_ids, min_amount, per_member_once, is_active)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (data.get("branch","all"), data["name"], data.get("discount_type","amount"),
+             int(data.get("discount_value",0)), data.get("validity_type","permanent"),
+             data.get("valid_from",""), data.get("valid_to",""), int(data.get("valid_days",0)),
+             data.get("apply_scope","all") or "all", data.get("product_ids",""),
+             int(data.get("min_amount",0)), int(data.get("per_member_once",1)), 1))
+        rid = cur.lastrowid
+    conn.commit(); conn.close()
+    return rid
+
+
+def get_coupons(branch: str = "") -> list[dict]:
+    conn = get_conn()
+    if branch:
+        rows = _rows(conn.execute(
+            "SELECT * FROM coupons WHERE (branch='all' OR branch=?) ORDER BY id DESC", (branch,)))
+    else:
+        rows = _rows(conn.execute("SELECT * FROM coupons ORDER BY id DESC"))
+    conn.close()
+    return rows
+
+
+def get_coupon(coupon_id: int) -> dict | None:
+    conn = get_conn()
+    r = _one(conn.execute("SELECT * FROM coupons WHERE id=?", (coupon_id,)))
+    conn.close()
+    return r
+
+
+def deactivate_coupon(coupon_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE coupons SET is_active=0 WHERE id=?", (coupon_id,))
+    conn.commit(); conn.close()
+
+
+def _coupon_expiry(coupon: dict) -> str:
+    """발급 시 만료일 계산. 영구=''(빈값)."""
+    if coupon.get("validity_type") != "period":
+        return ""
+    if coupon.get("valid_days"):
+        return (_dt.now() + _td(days=int(coupon["valid_days"]))).strftime("%Y-%m-%d")
+    return coupon.get("valid_to", "") or ""
+
+
+def issue_coupon_to_member(coupon_id: int, member_id: int, branch: str = "") -> tuple[bool, str]:
+    """쿠폰 1장 지급. per_member_once면 중복 지급 차단."""
+    coupon = get_coupon(coupon_id)
+    if not coupon or not coupon["is_active"]:
+        return False, "유효하지 않은 쿠폰"
+    conn = get_conn()
+    if coupon["per_member_once"]:
+        dup = conn.execute(
+            "SELECT 1 FROM member_coupons WHERE coupon_id=? AND member_id=?",
+            (coupon_id, member_id)).fetchone()
+        if dup:
+            conn.close()
+            return False, "이미 발급된 쿠폰입니다"
+    conn.execute("""INSERT INTO member_coupons (coupon_id, member_id, branch, status, expires_at)
+                    VALUES (?,?,?, 'available', ?)""",
+                 (coupon_id, member_id, branch or coupon.get("branch",""), _coupon_expiry(coupon)))
+    conn.commit(); conn.close()
+    return True, "발급되었습니다"
+
+
+def issue_coupon_bulk(coupon_id: int, branch: str = "") -> int:
+    """전체 회원 일괄 지급. branch='' 또는 'all'이면 전 지점."""
+    conn = get_conn()
+    if branch and branch != "all":
+        mids = [r[0] for r in conn.execute(
+            "SELECT id FROM members WHERE branch=? AND status='active'", (branch,)).fetchall()]
+    else:
+        mids = [r[0] for r in conn.execute(
+            "SELECT id FROM members WHERE status='active'").fetchall()]
+    conn.close()
+    n = 0
+    for mid in mids:
+        ok, _ = issue_coupon_to_member(coupon_id, mid, branch)
+        if ok:
+            n += 1
+    return n
+
+
+def issue_coupon_selected(coupon_id: int, member_ids: list[int], branch: str = "") -> int:
+    n = 0
+    for mid in member_ids:
+        ok, _ = issue_coupon_to_member(coupon_id, int(mid), branch)
+        if ok:
+            n += 1
+    return n
+
+
+def _refresh_expired(conn):
+    today = _dt.now().strftime("%Y-%m-%d")
+    conn.execute("""UPDATE member_coupons SET status='expired'
+                    WHERE status='available' AND expires_at!='' AND expires_at < ?""", (today,))
+    conn.commit()
+
+
+def get_member_coupons(member_id: int, available_only: bool = False) -> list[dict]:
+    conn = get_conn()
+    _refresh_expired(conn)
+    q = """SELECT mc.*, c.name, c.discount_type, c.discount_value, c.apply_scope,
+                  c.min_amount, c.product_ids
+           FROM member_coupons mc JOIN coupons c ON c.id=mc.coupon_id
+           WHERE mc.member_id=?"""
+    p = [member_id]
+    if available_only:
+        q += " AND mc.status='available'"
+    q += " ORDER BY mc.id DESC"
+    rows = _rows(conn.execute(q, p))
+    conn.close()
+    return rows
+
+
+def _coupon_applies(c: dict, category: str, product_id: int, amount: int) -> bool:
+    scope = (c.get("apply_scope") or "all").strip()
+    if scope and scope != "all":
+        cats = [s.strip() for s in scope.split(",") if s.strip()]
+        if category and cats and category not in cats:
+            return False
+    pids = (c.get("product_ids") or "").strip()
+    if pids:
+        idlist = [s.strip() for s in pids.split(",") if s.strip()]
+        if idlist and str(product_id) not in idlist:
+            return False
+    if c.get("min_amount") and amount < int(c["min_amount"]):
+        return False
+    return True
+
+
+def applicable_member_coupons(member_id: int, category: str, product_id: int, amount: int) -> list[dict]:
+    """현재 결제(카테고리/상품/금액)에 사용 가능한 회원 쿠폰만."""
+    out = []
+    for c in get_member_coupons(member_id, available_only=True):
+        if _coupon_applies(c, category, product_id, amount):
+            out.append(c)
+    return out
+
+
+def coupon_discount(member_coupon: dict, amount: int) -> int:
+    """할인액 계산 (결제액을 넘지 않음)."""
+    if member_coupon.get("discount_type") == "percent":
+        d = round(int(amount) * int(member_coupon.get("discount_value", 0)) / 100)
+    else:
+        d = int(member_coupon.get("discount_value", 0))
+    return max(0, min(int(amount), d))
+
+
+def redeem_member_coupon(member_coupon_id: int, member_id: int, category: str,
+                         product_id: int, amount: int, sale_id: int = 0) -> tuple[int, str]:
+    """쿠폰 사용 처리. 반환: (할인액, 메시지). 실패 시 (0, 사유)."""
+    conn = get_conn()
+    _refresh_expired(conn)
+    mc = _one(conn.execute("""SELECT mc.*, c.discount_type, c.discount_value, c.apply_scope,
+                  c.min_amount, c.product_ids FROM member_coupons mc
+                  JOIN coupons c ON c.id=mc.coupon_id WHERE mc.id=?""", (member_coupon_id,)))
+    if not mc or mc["member_id"] != member_id:
+        conn.close(); return 0, "쿠폰을 찾을 수 없습니다"
+    if mc["status"] != "available":
+        conn.close(); return 0, "사용할 수 없는 쿠폰입니다"
+    if not _coupon_applies(mc, category, product_id, amount):
+        conn.close(); return 0, "이 결제에 사용할 수 없는 쿠폰입니다"
+    disc = coupon_discount(mc, amount)
+    conn.execute("""UPDATE member_coupons SET status='used',
+                    used_at=datetime('now','localtime'), sale_id=? WHERE id=?""",
+                 (sale_id, member_coupon_id))
+    conn.commit(); conn.close()
+    return disc, "쿠폰 적용"
+
+
+def set_event_coupon(event_id: int, coupon_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE events SET coupon_id=? WHERE id=?", (coupon_id, event_id))
+    conn.commit(); conn.close()

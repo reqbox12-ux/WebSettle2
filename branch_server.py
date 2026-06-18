@@ -722,9 +722,10 @@ async def api_change_password(request: Request, body: ChangePwBody):
 
 # ── Home API ───────────────────────────────────────────────────────────────────
 @app.get("/api/home/data")
-async def api_home_data(request: Request):
+async def api_home_data(request: Request, branch: str = ""):
     user = require_auth(request)
-    branch = user.get("branch", "")
+    # 관리자는 헤더에서 선택한 지점(branch 파라미터)을 따른다. 일반 직원/회원은 본인 지점.
+    branch = _scope_branch(user, branch)
     conn = get_conn()
 
     anns_cur = conn.execute("""
@@ -1169,6 +1170,46 @@ async def api_announcements_create(request: Request, body: AnnouncementBody):
     return {"id": rid}
 
 
+class AnnouncementPatchBody(BaseModel):
+    title:         Optional[str] = None
+    content:       Optional[str] = None
+    priority:      Optional[str] = None
+    target_branch: Optional[str] = None
+    expires_at:    Optional[str] = None
+
+
+@app.patch("/api/operations/announcements/{ann_id}")
+async def api_announcements_patch(request: Request, ann_id: int, body: AnnouncementPatchBody):
+    require_staff(request)
+    updates = {k: v for k, v in body.dict().items() if v is not None}
+    if updates:
+        set_clause = ", ".join(f"{k}=?" for k in updates)
+        conn = get_conn()
+        conn.execute(f"UPDATE announcements SET {set_clause} WHERE id=?",
+                     (*updates.values(), ann_id))
+        conn.commit(); conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/operations/announcements/{ann_id}")
+async def api_announcements_delete(request: Request, ann_id: int):
+    require_staff(request)
+    conn = get_conn()
+    conn.execute("DELETE FROM announcements WHERE id=?", (ann_id,))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+
+@app.delete("/api/operations/events/{event_id}")
+async def api_events_delete(request: Request, event_id: int):
+    require_staff(request)
+    conn = get_conn()
+    conn.execute("DELETE FROM events WHERE id=?", (event_id,))
+    conn.execute("DELETE FROM event_comments WHERE event_id=?", (event_id,))
+    conn.commit(); conn.close()
+    return {"ok": True}
+
+
 # ── Operations: Instructors ───────────────────────────────────────────────────
 @app.get("/api/operations/instructors")
 async def api_instructors_get(request: Request, branch: str = ""):
@@ -1432,6 +1473,7 @@ class SaleBody(BaseModel):
     is_mgmt_fee:  int = 0
     sale_date:    str = ""
     instructor_employee_id: int = 0   # PT/레슨 담당강사 (판매 시 지정)
+    member_coupon_id: int = 0         # 적용할 회원 쿠폰(쿠폰함 id)
 
 
 @app.post("/api/sales")
@@ -1439,7 +1481,8 @@ async def api_sales_create(request: Request, body: SaleBody):
     # 상품 판매: 인포·트레이너·프로·관리자 (GX강사 제외)
     user = require_role(request, "info", "trainer", "golf_pro", "manager")
     from domains.branch_app.crm_ext import (
-        charge_amount, get_product, create_lesson_enrollment, create_gx_enrollment)
+        charge_amount, get_product, create_lesson_enrollment, create_gx_enrollment,
+        redeem_member_coupon)
     branch  = _scope_branch(user, body.branch) or user.get("branch", "")
     if not branch:
         raise HTTPException(status_code=400, detail="지점 정보가 없습니다")
@@ -1451,11 +1494,26 @@ async def api_sales_create(request: Request, body: SaleBody):
     if amount <= 0:
         raise HTTPException(status_code=400, detail="결제 금액을 입력하세요")
 
+    # 쿠폰 할인 (회원 쿠폰함에서 선택분)
+    discount = 0
+    if body.member_coupon_id and body.member_id:
+        discount, _msg = redeem_member_coupon(
+            body.member_coupon_id, body.member_id, body.category or (product.get("category") if product else ""),
+            body.product_id, amount, sale_id=0)
+        if discount <= 0:
+            raise HTTPException(status_code=400, detail=_msg)
+        amount = max(0, amount - discount)
+
     data = body.dict()
     data["branch"]  = branch
     data["sold_by"] = user.get("name", "")
     data["amount"]  = amount
     sale_id = create_sale(data)
+    # 쿠폰 사용 행에 sale_id 연결
+    if discount > 0:
+        conn = get_conn()
+        conn.execute("UPDATE member_coupons SET sale_id=? WHERE id=?", (sale_id, body.member_coupon_id))
+        conn.commit(); conn.close()
 
     enrollment_id = 0
     if product and product.get("category") == "lesson":
@@ -1478,7 +1536,7 @@ async def api_sales_create(request: Request, body: SaleBody):
                              member_id=body.member_id, member_name=body.member_name,
                              sale_id=sale_id)
 
-    return {"id": sale_id, "amount": amount, "enrollment_id": enrollment_id}
+    return {"id": sale_id, "amount": amount, "discount": discount, "enrollment_id": enrollment_id}
 
 
 # ── 강사 목록 (판매 시 담당강사·GX강사 선택) ────────────────────────────────────
@@ -1859,6 +1917,116 @@ async def api_suggestion_create(request: Request, body: SuggestionBody):
     conn = get_conn(); conn.execute("UPDATE product_suggestions SET approval_item_id=? WHERE id=?", (aid, rid))
     conn.commit(); conn.close()
     return {"id": rid}
+
+
+# ── 쿠폰: 관리자(정책·발급) ──────────────────────────────────────────────────────
+class CouponBody(BaseModel):
+    id:              int = 0
+    name:            str
+    discount_type:   str = "amount"      # 'amount' | 'percent'
+    discount_value:  int = 0
+    validity_type:   str = "permanent"   # 'permanent' | 'period'
+    valid_from:      str = ""
+    valid_to:        str = ""
+    valid_days:      int = 0
+    apply_scope:     str = "all"         # 'all' 또는 'gx,lesson'
+    product_ids:     str = ""
+    min_amount:      int = 0
+    per_member_once: int = 1
+    is_active:       int = 1
+    scope_all:       bool = False        # True면 전 지점 공통 쿠폰
+
+
+@app.get("/api/coupons")
+async def api_coupons_get(request: Request):
+    user = require_role(request, "manager")
+    from domains.branch_app.crm_ext import get_coupons
+    branch = "" if user.get("admin") else user.get("branch", "")
+    return get_coupons(branch)
+
+
+@app.post("/api/coupons")
+async def api_coupons_create(request: Request, body: CouponBody):
+    user = require_role(request, "manager")
+    from domains.branch_app.crm_ext import create_coupon
+    data = body.dict()
+    data["branch"] = "all" if body.scope_all else (user.get("branch", "") or "all")
+    return {"id": create_coupon(data)}
+
+
+@app.delete("/api/coupons/{coupon_id}")
+async def api_coupons_delete(request: Request, coupon_id: int):
+    require_role(request, "manager")
+    from domains.branch_app.crm_ext import deactivate_coupon
+    deactivate_coupon(coupon_id)
+    return {"ok": True}
+
+
+@app.post("/api/coupons/{coupon_id}/issue-all")
+async def api_coupons_issue_all(request: Request, coupon_id: int):
+    user = require_role(request, "manager")
+    from domains.branch_app.crm_ext import issue_coupon_bulk
+    branch = "" if user.get("admin") else user.get("branch", "")
+    n = issue_coupon_bulk(coupon_id, branch)
+    return {"ok": True, "issued": n}
+
+
+class IssueMembersBody(BaseModel):
+    member_ids: list[int]
+
+
+@app.post("/api/coupons/{coupon_id}/issue-members")
+async def api_coupons_issue_members(request: Request, coupon_id: int, body: IssueMembersBody):
+    user = require_role(request, "manager")
+    from domains.branch_app.crm_ext import issue_coupon_selected
+    n = issue_coupon_selected(coupon_id, body.member_ids, user.get("branch", ""))
+    return {"ok": True, "issued": n}
+
+
+# 이벤트 ↔ 쿠폰 연결
+class EventCouponBody(BaseModel):
+    coupon_id: int
+
+
+@app.post("/api/operations/events/{event_id}/coupon")
+async def api_event_set_coupon(request: Request, event_id: int, body: EventCouponBody):
+    require_role(request, "manager")
+    from domains.branch_app.crm_ext import set_event_coupon
+    set_event_coupon(event_id, body.coupon_id)
+    return {"ok": True}
+
+
+# ── 쿠폰: 회원(쿠폰함·받기·결제 적용) ────────────────────────────────────────────
+@app.get("/api/my/coupons")
+async def api_my_coupons(request: Request):
+    user = require_member(request)
+    from domains.branch_app.crm_ext import get_member_coupons
+    return get_member_coupons(int(user.get("sub") or 0))
+
+
+@app.get("/api/my/coupons/applicable")
+async def api_my_coupons_applicable(request: Request, category: str = "",
+                                    product_id: int = 0, amount: int = 0):
+    user = require_member(request)
+    from domains.branch_app.crm_ext import applicable_member_coupons
+    return applicable_member_coupons(int(user.get("sub") or 0), category, product_id, amount)
+
+
+@app.post("/api/operations/events/{event_id}/claim-coupon")
+async def api_event_claim_coupon(request: Request, event_id: int):
+    """이벤트에 연결된 쿠폰을 회원이 받기."""
+    user = require_member(request)
+    conn = get_conn()
+    ev = _one(conn.execute("SELECT coupon_id, branch FROM events WHERE id=?", (event_id,)))
+    conn.close()
+    if not ev or not ev.get("coupon_id"):
+        raise HTTPException(status_code=400, detail="이 이벤트에는 받을 쿠폰이 없습니다")
+    from domains.branch_app.crm_ext import issue_coupon_to_member
+    ok, msg = issue_coupon_to_member(ev["coupon_id"], int(user.get("sub") or 0),
+                                     user.get("branch", ""))
+    if not ok:
+        raise HTTPException(status_code=400, detail=msg)
+    return {"ok": True, "msg": msg}
 
 
 # ── Classes API ────────────────────────────────────────────────────────────────

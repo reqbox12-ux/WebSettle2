@@ -1,51 +1,167 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-theme="light">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>WebSettle2 · 라온스포츠 ERP</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+  <title>로그인 — 라온스포츠 ERP</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
-  <link rel="stylesheet" href="/static/css/app.css?v={{ asset_ver }}">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/wanteddev/wanted-sans@v1.0.3/packages/wanted-sans/fonts/webfonts/variable/split/WantedSansVariable.min.css">
+  <link rel="stylesheet" href="/static/css/landing.css?v={{ asset_ver }}">
+  <style>
+    .login-headline {
+      font-family: var(--font-display);
+      font-size: 48px; font-weight: 800; line-height: 1.08;
+      letter-spacing: -0.035em; margin: 0 0 16px; white-space: pre-line;
+    }
+    .art-logo { display: flex; align-items: center; gap: 12px; }
+    .art-footer { font-size: 12px; color: rgba(255,255,255,.4); }
+
+    .error-msg {
+      background: var(--accent-soft); border: 1px solid var(--accent);
+      color: var(--accent); border-radius: 10px; padding: 10px 14px;
+      font-size: 13px; font-weight: 500; margin-bottom: 14px; display: none;
+    }
+    .error-msg.show { display: block; }
+
+    .btn-submit {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      width: 100%; height: 48px; background: var(--accent); color: #fff;
+      border: 0; border-radius: 12px; font-size: 15px; font-weight: 700;
+      cursor: pointer; margin-top: 20px; letter-spacing: -0.01em;
+      transition: background .12s, transform .08s;
+    }
+    .btn-submit:hover { background: var(--accent-2); }
+    .btn-submit:active { transform: translateY(1px); }
+    .btn-submit:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-submit svg { width: 18px; height: 18px; }
+
+    .pw-row { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+
+    .dark-toggle {
+      position: fixed; top: 18px; right: 18px; width: 36px; height: 36px;
+      border-radius: 50%; background: rgba(255,255,255,.15); backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,.2); display: grid; place-items: center;
+      cursor: pointer; color: #fff; font-size: 18px;
+    }
+    [data-theme="dark"] .dark-toggle { background: rgba(255,255,255,.08); }
+  </style>
 </head>
-<body class="login-body">
-  <div class="login-wrap">
-    <div class="login-card">
-      <div class="login-logo"><img src="/static/img/logo.png" alt="LAONSPORTS"
-        style="height:44px;object-fit:contain"></div>
-      <div class="login-sub">라온스포츠 정산 ERP</div>
-      <div id="err" class="login-err"></div>
-      <form onsubmit="doLogin(event)">
-        <label>아이디</label>
-        <input id="username" type="text" autocomplete="username" required>
-        <label>비밀번호</label>
-        <input id="password" type="password" autocomplete="current-password" required>
-        <button type="submit" id="btn">로그인</button>
-      </form>
+<body>
+  <button class="dark-toggle" id="themeBtn" title="다크모드 전환" onclick="toggleTheme()">🌙</button>
+
+  <div class="login-shell">
+    <!-- Left: Art side -->
+    <div class="login-art" id="loginArt">
+      <div class="art-logo">
+        <img src="/static/img/logo.png" alt="LAONSPORTS 로고"
+             style="height:44px;filter:brightness(0) invert(1);object-fit:contain;">
+      </div>
+      <div>
+        <h1 class="login-headline">데이터로 보는&#10;라온스포츠.</h1>
+      </div>
+      <div class="art-footer">© 2026 LAONSPORTS · ERP v 3.0.0</div>
+    </div>
+
+    <!-- Right: Form side -->
+    <div class="login-form-side">
+      <div class="login-card">
+        <h1 id="loginTitle">정산 ERP 로그인</h1>
+        <p class="sub">라온스포츠 본사 관리자 전용</p>
+
+        <div class="error-msg" id="errorMsg"></div>
+
+        <form id="loginForm" onsubmit="doLogin(event)">
+          <div class="field">
+            <label class="field-label" for="username">아이디</label>
+            <input class="input" type="text" id="username" name="username"
+                   placeholder="관리자 아이디" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label class="field-label" for="password">비밀번호</label>
+            <input class="input" type="password" id="password" name="password"
+                   placeholder="••••••••" autocomplete="current-password" required>
+          </div>
+          <div class="pw-row">
+            <label class="checkbox"><input type="checkbox" id="keepLogin" checked> 로그인 유지</label>
+          </div>
+          <button class="btn-submit" type="submit" id="btn">
+            로그인
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </form>
+
+        <div class="signup-row" style="margin-top:18px">
+          <span>지점 직원이신가요?</span>
+          <a href="http://localhost:8502/login">지점 포털로 →</a>
+        </div>
+      </div>
     </div>
   </div>
+
   <script>
+    // 좌측 배경 이미지 랜덤
+    const ART_IMAGES = [
+      'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=1600&q=80',
+      'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=1600&q=80',
+      'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=1600&q=80',
+      'https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=1600&q=80',
+      'https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=1600&q=80',
+    ];
+    (function setArt() {
+      const el = document.getElementById('loginArt');
+      const url = ART_IMAGES[Math.floor(Math.random() * ART_IMAGES.length)];
+      if (el) el.style.background = `#0c0a08 url('${url}') center/cover`;
+    })();
+
+    function toggleTheme() {
+      const h = document.documentElement;
+      const next = h.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      h.setAttribute('data-theme', next);
+      localStorage.setItem('ws2_theme', next);
+      document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+    }
+    (function initTheme() {
+      const t = localStorage.getItem('ws2_theme') || 'light';
+      document.documentElement.setAttribute('data-theme', t);
+      document.getElementById('themeBtn').textContent = t === 'dark' ? '☀️' : '🌙';
+    })();
+
+    function showError(msg) {
+      const el = document.getElementById('errorMsg');
+      el.textContent = msg; el.classList.add('show');
+    }
+
     async function doLogin(e) {
       e.preventDefault();
       const btn = document.getElementById('btn');
-      const err = document.getElementById('err');
-      btn.disabled = true; btn.textContent = '로그인 중…'; err.textContent = '';
+      btn.disabled = true; btn.textContent = '로그인 중…';
+      document.getElementById('errorMsg').classList.remove('show');
       try {
         const resp = await fetch('/api/auth/login', {
-          method: 'POST', headers: {'Content-Type': 'application/json'},
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             username: document.getElementById('username').value.trim(),
             password: document.getElementById('password').value,
           })
         });
         const data = await resp.json();
-        if (!resp.ok) { err.textContent = data.detail || '로그인 실패'; return; }
+        if (!resp.ok) { showError(data.detail || '아이디 또는 비밀번호가 올바르지 않습니다.'); return; }
         localStorage.setItem('ws2_token', data.token);
         localStorage.setItem('ws2_name', data.name);
         localStorage.setItem('ws2_role', data.role);
         document.cookie = 'ws2_token=' + data.token + ';path=/;max-age=2592000';
         location.href = '/app';
-      } catch (e2) { err.textContent = '네트워크 오류'; }
-      finally { btn.disabled = false; btn.textContent = '로그인'; }
+      } catch (e2) {
+        showError('네트워크 오류가 발생했습니다. 다시 시도해 주세요.');
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = '로그인 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="width:18px;height:18px"><path d="M5 12h14M12 5l7 7-7 7"/></svg>';
+      }
     }
     if (localStorage.getItem('ws2_token')) location.href = '/app';
   </script>
