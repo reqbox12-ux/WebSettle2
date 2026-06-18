@@ -78,6 +78,7 @@
   // ── 페이지 정의 ────────────────────────────────────────────
   const PAGES = {
     dashboard:  { label: '대시보드',   icon: 'layout-grid',  sec: 'WORKSPACE' },
+    live:       { label: '실시간 매출', icon: 'radio',        sec: 'WORKSPACE' },
     branch:     { label: '지점',       icon: 'building-2',   sec: '관리' },
     payroll:    { label: '인사/급여',  icon: 'credit-card',  sec: '관리' },
     attendance: { label: '출퇴근 현황', icon: 'clock',        sec: '관리' },
@@ -126,7 +127,7 @@
 
   function renderPage() {
     const el = document.getElementById('page-content');
-    ({ dashboard: renderDashboard, branch: renderBranch, attendance: renderAttendance,
+    ({ dashboard: renderDashboard, live: renderLive, branch: renderBranch, attendance: renderAttendance,
        payroll: renderPayroll, upload: renderUpload, settings: renderSettings,
     }[currentPage] || (() => { el.innerHTML = '<div class="empty">준비 중</div>'; }))(el);
   }
@@ -266,6 +267,73 @@
         ctx.parentElement.style.height = '340px';
       }
     }
+  }
+
+  /* ════ 실시간 매출 (CRM 연동) ═══════════════════════════════ */
+  let _liveTimer = null;
+  async function renderLive(el) {
+    el.innerHTML = `
+      <div class="ph"><div class="ph-title">실시간 매출</div>
+        <div class="ph-sub">CRM에서 발생하는 결제를 실시간 집계 (업로드 데이터와 별개) · 30초 자동 갱신</div></div>
+      <div class="filter-bar">${ymFilter(loadLive)}
+        <span id="live-dot" style="color:var(--pos);font-size:12px">● 실시간</span></div>
+      <div id="live-body"><div class="empty">로드 중…</div></div>`;
+    loadLive();
+    if (_liveTimer) clearInterval(_liveTimer);
+    _liveTimer = setInterval(() => { if (currentPage === 'live') loadLive(true); else clearInterval(_liveTimer); }, 30000);
+  }
+
+  async function loadLive(quiet) {
+    const body = document.getElementById('live-body');
+    if (!body) return;
+    if (!quiet) body.innerHTML = '<div class="empty">로드 중…</div>';
+    const r = await api(`/api/live/sales?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) return;
+    const d = await r.json();
+    const W = (v) => Math.round(v || 0).toLocaleString();
+
+    const branchRows = d.by_branch.map(b => {
+      const rate = b.goal > 0 ? (b.amount / b.goal * 100) : 0;
+      const col = rate >= 100 ? 'var(--pos)' : (rate >= 70 ? '#B86E1F' : 'var(--red)');
+      return `<tr><td style="text-align:left;font-weight:600">${b.branch}</td>
+        <td>${W(b.amount)}원</td><td>${b.count}건</td>
+        <td>${b.goal ? W(b.goal) + '원' : '—'}</td>
+        <td style="min-width:140px">${b.goal ? `
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="flex:1;background:var(--sf2);border-radius:999px;height:7px;overflow:hidden">
+              <div style="width:${Math.min(rate,100).toFixed(1)}%;height:100%;background:${col}"></div></div>
+            <span style="font-size:12px;font-weight:700;color:${col}">${rate.toFixed(0)}%</span></div>` : '<span style="color:var(--ink3)">목표 미설정</span>'}</td>
+      </tr>`;
+    }).join('');
+
+    const catChips = d.by_category.map(c =>
+      `<span style="display:inline-block;background:var(--sf2);border-radius:8px;padding:6px 12px;margin:0 6px 6px 0;font-size:13px">
+        ${c.label} <b>${W(c.amount)}원</b></span>`).join('');
+    const payChips = d.by_pay.map(c =>
+      `<span style="display:inline-block;background:var(--sf2);border-radius:8px;padding:6px 12px;margin:0 6px 6px 0;font-size:13px">
+        ${c.label} <b>${W(c.amount)}원</b></span>`).join('');
+
+    body.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-lbl">이번달 매출</div><div class="kpi-val">${W(d.month_total)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">오늘 매출</div><div class="kpi-val pos">${W(d.today_total)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">결제 건수</div><div class="kpi-val">${d.tx_count}건</div></div>
+        <div class="kpi"><div class="kpi-lbl">지점 수</div><div class="kpi-val">${d.by_branch.length}곳</div></div>
+      </div>
+      <div class="card" style="padding:16px 20px"><b>카테고리별</b><div style="margin-top:10px">${catChips||'—'}</div>
+        <b style="display:block;margin-top:12px">결제수단별</b><div style="margin-top:10px">${payChips||'—'}</div></div>
+      <div class="card"><div class="card-head">지점별 매출 · 목표 달성률</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl"><thead><tr><th>지점</th><th>매출</th><th>건수</th><th>목표</th><th>달성률</th></tr></thead>
+            <tbody>${branchRows || '<tr><td colspan="5" class="empty">매출 없음</td></tr>'}</tbody></table></div></div>
+      <div class="card"><div class="card-head">최근 결제 (30건)</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl"><thead><tr><th>일자</th><th>지점</th><th>회원</th><th>상품</th><th>분류</th><th>금액</th><th>결제</th><th>담당</th></tr></thead>
+            <tbody>${d.recent.map(x=>`<tr>
+              <td>${x.date}</td><td style="text-align:left">${x.branch}</td><td style="text-align:left">${x.member||'—'}</td>
+              <td style="text-align:left">${x.product}</td><td>${x.category}</td>
+              <td style="font-weight:700">${W(x.amount)}</td><td>${x.pay}</td><td>${x.by||'—'}</td></tr>`).join('')
+              || '<tr><td colspan="8" class="empty">결제 없음</td></tr>'}</tbody></table></div></div>`;
   }
 
   /* ════ 지점 (상세/관리/매출입력) ═══════════════════════════ */

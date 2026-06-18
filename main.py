@@ -202,6 +202,59 @@ async def api_summary_excel(request: Request, year: int, month: int):
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
 
 
+# ── 실시간 매출(CRM 연동) 대시보드 ────────────────────────────
+@app.get("/api/live/sales")
+async def api_live_sales(request: Request, year: int, month: int):
+    """CRM에서 실시간으로 쌓이는 결제(sales) 집계 — 업로드 데이터와 별개."""
+    require_auth(request)
+    from modules.db import get_conn
+    from datetime import datetime as _dt
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    today = _dt.now().strftime("%Y-%m-%d")
+
+    # 환불 표시(pay_method LIKE '%환불%')는 제외
+    base = "FROM sales WHERE sale_date LIKE ? AND pay_method NOT LIKE '%환불%'"
+    rows_branch = conn.execute(
+        f"SELECT branch, SUM(amount) amt, COUNT(*) cnt {base} GROUP BY branch ORDER BY amt DESC",
+        (f"{prefix}%",)).fetchall()
+    by_cat = conn.execute(
+        f"SELECT category, SUM(amount) amt {base} GROUP BY category", (f"{prefix}%",)).fetchall()
+    by_pay = conn.execute(
+        f"SELECT pay_method, SUM(amount) amt {base} GROUP BY pay_method", (f"{prefix}%",)).fetchall()
+    by_day = conn.execute(
+        f"SELECT substr(sale_date,1,10) d, SUM(amount) amt {base} GROUP BY d ORDER BY d",
+        (f"{prefix}%",)).fetchall()
+    today_total = conn.execute(
+        "SELECT COALESCE(SUM(amount),0) FROM sales WHERE sale_date=? AND pay_method NOT LIKE '%환불%'",
+        (today,)).fetchone()[0]
+    recent = conn.execute(
+        f"SELECT sale_date, branch, member_name, product_name, category, amount, pay_method, sold_by "
+        f"FROM sales WHERE sale_date LIKE ? AND pay_method NOT LIKE '%환불%' "
+        f"ORDER BY id DESC LIMIT 30", (f"{prefix}%",)).fetchall()
+    conn.close()
+
+    # 지점 목표 (branch_goals)
+    from modules.db import get_branch_goals
+    goals = get_branch_goals(year, month)
+
+    month_total = sum(r[1] or 0 for r in rows_branch)
+    cat_lbl = {"gx": "GX", "lesson": "레슨(PT·골프)", "goods": "상품"}
+    return {
+        "month_total": month_total,
+        "today_total": today_total,
+        "tx_count": sum(r[2] or 0 for r in rows_branch),
+        "by_branch": [{"branch": r[0], "amount": r[1] or 0, "count": r[2] or 0,
+                       "goal": goals.get(r[0], 0)} for r in rows_branch],
+        "by_category": [{"label": cat_lbl.get(r[0], r[0] or "기타"), "amount": r[1] or 0} for r in by_cat],
+        "by_pay": [{"label": r[0] or "기타", "amount": r[1] or 0} for r in by_pay],
+        "by_day": [{"date": r[0], "amount": r[1] or 0} for r in by_day],
+        "recent": [{"date": r[0], "branch": r[1], "member": r[2], "product": r[3],
+                    "category": cat_lbl.get(r[4], r[4] or ""), "amount": r[5],
+                    "pay": r[6], "by": r[7]} for r in recent],
+    }
+
+
 # ── 지점 상세 API ─────────────────────────────────────────────
 @app.get("/api/branches")
 async def api_branches(request: Request):
