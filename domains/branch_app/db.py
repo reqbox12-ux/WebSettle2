@@ -568,9 +568,10 @@ def upsert_member(data: dict) -> int:
               data["id"]))
         mid = data["id"]
     else:
+        # 신규 회원: 임시PIN(전화뒷4) → 첫 로그인 시 비번변경 강제
         cur = conn.execute("""
-            INSERT INTO members (branch, name, phone, email, birth_date, gender, join_date, status, pin, note, dong, ho, phone_hash, name_hash)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO members (branch, name, phone, email, birth_date, gender, join_date, status, pin, note, dong, ho, phone_hash, name_hash, must_change_pw)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,1)
         """, (data["branch"], enc_name, enc_phone, data.get("email",""),
               data.get("birth_date",""), data.get("gender",""),
               data.get("join_date",""), data.get("status","active"),

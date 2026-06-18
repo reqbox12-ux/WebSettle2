@@ -167,15 +167,18 @@ async def on_startup():
 
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
+from shared.crypto import dec_row as _dec_row
+
+
 def _rows(cur) -> list[dict]:
     cols = [d[0] for d in cur.description]
-    return [dict(zip(cols, r)) for r in cur.fetchall()]
+    return [_dec_row(dict(zip(cols, r))) for r in cur.fetchall()]
 
 
 def _one(cur) -> dict | None:
     cols = [d[0] for d in cur.description]
     row  = cur.fetchone()
-    return dict(zip(cols, row)) if row else None
+    return _dec_row(dict(zip(cols, row))) if row else None
 
 
 def hash_password(plain: str) -> str:
