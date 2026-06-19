@@ -4,64 +4,139 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
   <title>회원 로그인 — 라온스포츠</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/wanteddev/wanted-sans@v1.0.3/packages/wanted-sans/fonts/webfonts/variable/split/WantedSansVariable.min.css">
   <link rel="stylesheet" href="/static/css/landing.css?v={{ asset_ver }}">
   <style>
-    body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:18px;
-      background:linear-gradient(135deg,#E60028,#1a1410); }
-    .ml-card { width:min(420px,96vw); background:var(--surface,#fff); color:inherit;
-      border-radius:20px; box-shadow:0 20px 60px rgba(0,0,0,.35); padding:30px 26px; }
-    .ml-logo { display:flex; align-items:center; gap:10px; margin-bottom:18px; }
-    .ml-logo img { height:34px; object-fit:contain; }
-    .ml-branch { display:inline-block; background:var(--accent,#E60028); color:#fff;
-      font-size:12px; font-weight:800; padding:4px 10px; border-radius:999px; margin-bottom:10px; }
-    .ml-card h1 { font-size:23px; font-weight:900; margin:0 0 4px; }
-    .ml-sub { font-size:13px; opacity:.7; margin-bottom:18px; }
-    .ml-field { margin-bottom:11px; }
-    .ml-field label { display:block; font-size:13px; font-weight:600; margin-bottom:5px; }
-    .ml-field input { width:100%; padding:13px 14px; border:1.5px solid rgba(128,128,128,.3);
-      border-radius:11px; font-size:14px; background:transparent; color:inherit; }
-    .ml-btn { width:100%; height:50px; border:0; border-radius:12px; background:#E60028; color:#fff;
-      font-size:15px; font-weight:800; cursor:pointer; margin-top:8px; }
-    .ml-err { color:#E60028; font-size:12.5px; min-height:18px; margin:6px 0; }
-    .ml-signup { text-align:center; margin-top:18px; font-size:13px; }
-    .ml-signup a { color:var(--accent,#E60028); font-weight:700; }
-    .ml-foot { text-align:center; font-size:11px; opacity:.5; margin-top:14px; }
+    .login-headline {
+      font-family: var(--font-display);
+      font-size: 48px; font-weight: 800; line-height: 1.08;
+      letter-spacing: -0.035em; margin: 0 0 16px; white-space: pre-line;
+    }
+    .art-logo { display: flex; align-items: center; gap: 12px; }
+    .art-footer { font-size: 12px; color: rgba(255,255,255,.4); }
+    .branch-badge {
+      display:inline-flex; align-items:center; gap:6px;
+      background: var(--accent); color:#fff; padding:6px 12px; border-radius:999px;
+      font-size:13px; font-weight:800; margin-bottom:14px;
+    }
+    .error-msg {
+      background: var(--accent-soft); border: 1px solid var(--accent);
+      color: var(--accent); border-radius: 10px; padding: 10px 14px;
+      font-size: 13px; font-weight: 500; margin-bottom: 14px; display: none;
+    }
+    .error-msg.show { display: block; }
+    .btn-submit {
+      display: flex; align-items: center; justify-content: center; gap: 10px;
+      width: 100%; height: 48px; background: var(--accent); color: #fff;
+      border: 0; border-radius: 12px; font-size: 15px; font-weight: 700;
+      cursor: pointer; margin-top: 20px; letter-spacing: -0.01em;
+      transition: background .12s, transform .08s;
+    }
+    .btn-submit:hover { background: var(--accent-2); }
+    .btn-submit:active { transform: translateY(1px); }
+    .btn-submit:disabled { opacity: .6; cursor: not-allowed; }
+    .btn-submit svg { width: 18px; height: 18px; }
+    .pw-row { display:flex; align-items:center; font-size:13px; }
+    .signup-row { text-align:center; font-size:12.5px; color: var(--muted); margin-top: 20px; }
+    .signup-row a { color: var(--accent); font-weight:700; }
+    .dark-toggle {
+      position: fixed; top: 18px; right: 18px; width: 36px; height: 36px;
+      border-radius: 50%; background: rgba(255,255,255,.15); backdrop-filter: blur(6px);
+      border: 1px solid rgba(255,255,255,.2); display: grid; place-items: center;
+      cursor: pointer; color: #fff; font-size: 18px;
+    }
+    [data-theme="dark"] .dark-toggle { background: rgba(255,255,255,.08); }
   </style>
 </head>
 <body>
-  <div class="ml-card">
-    <div class="ml-logo">
-      <img src="/static/img/logo.png" alt="LAONSPORTS">
-    </div>
-    {% if branch %}<div class="ml-branch">📍 {{ branch }}</div>{% endif %}
-    <h1>회원 로그인</h1>
-    <div class="ml-sub">전화번호로 로그인하고 수업·상품을 이용하세요</div>
+  <button class="dark-toggle" id="themeBtn" title="다크모드 전환" onclick="toggleTheme()">🌙</button>
 
-    <form id="mlForm" onsubmit="memberLogin(event)">
-      <div class="ml-field"><label>전화번호</label>
-        <input id="ml-id" inputmode="numeric" placeholder="01012345678" autocomplete="username" required></div>
-      <div class="ml-field"><label>비밀번호</label>
-        <input id="ml-pw" type="password" placeholder="최초 1회: 전화번호 뒷 4자리" autocomplete="current-password" required></div>
-      <label class="checkbox" style="font-size:13px"><input type="checkbox" id="ml-keep"> 로그인 유지</label>
-      <div class="ml-err" id="ml-err"></div>
-      <button class="ml-btn" type="submit" id="ml-btn">로그인</button>
-    </form>
-
-    <div class="ml-signup">
-      아직 회원이 아니신가요?
-      {% if token %}<a href="/signup?b={{ token }}">회원가입 신청 →</a>
-      {% else %}<span style="opacity:.6">지점 QR로 접속해 가입하세요</span>{% endif %}
+  <div class="login-shell">
+    <!-- Left: Art -->
+    <div class="login-art" id="loginArt">
+      <div class="art-logo">
+        <img src="/static/img/logo.png" alt="LAONSPORTS 로고"
+             style="height:44px;filter:brightness(0) invert(1);object-fit:contain;">
+      </div>
+      <div>
+        <h1 class="login-headline">오늘의 한 세트,&#10;라온과 함께.</h1>
+      </div>
+      <div class="art-footer">© 2026 LAONSPORTS · 회원 포털</div>
     </div>
-    <div class="ml-foot">© 2026 LAONSPORTS</div>
+
+    <!-- Right: Form -->
+    <div class="login-form-side">
+      <div class="login-card">
+        {% if branch %}<div class="branch-badge">📍 {{ branch }}</div>{% endif %}
+        <h1>회원 로그인</h1>
+        <p class="sub">전화번호로 로그인하고 수업·상품을 이용하세요</p>
+
+        <div class="error-msg" id="errorMsg"></div>
+
+        <form id="mlForm" onsubmit="memberLogin(event)">
+          <div class="field">
+            <label class="field-label" for="ml-id">전화번호</label>
+            <input class="input" id="ml-id" inputmode="numeric" placeholder="01012345678" autocomplete="username" required>
+          </div>
+          <div class="field">
+            <label class="field-label" for="ml-pw">비밀번호</label>
+            <input class="input" id="ml-pw" type="password" placeholder="최초 1회: 전화번호 뒷 4자리" autocomplete="current-password" required>
+          </div>
+          <div class="pw-row">
+            <label class="checkbox"><input type="checkbox" id="ml-keep"> 로그인 유지</label>
+          </div>
+          <button class="btn-submit" type="submit" id="ml-btn">
+            로그인
+            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                 stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </form>
+
+        <div class="signup-row">
+          아직 회원이 아니신가요?
+          {% if token %}<a href="/signup?b={{ token }}">회원가입 신청 →</a>
+          {% else %}<span style="opacity:.6">지점 QR로 접속해 가입하세요</span>{% endif %}
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
     const TOKEN = "{{ token }}";
+    const ART_IMAGES = [
+      'https://images.unsplash.com/photo-1517836357463-d25dfeac3438?w=1600&q=80',
+      'https://images.unsplash.com/photo-1534438327276-14e5300c3a48?w=1600&q=80',
+      'https://images.unsplash.com/photo-1571019613454-1cb2f99b2d8b?w=1600&q=80',
+      'https://images.unsplash.com/photo-1574680096145-d05b474e2155?w=1600&q=80',
+      'https://images.unsplash.com/photo-1583454110551-21f2fa2afe61?w=1600&q=80',
+    ];
+    (function setArt() {
+      const el = document.getElementById('loginArt');
+      const url = ART_IMAGES[Math.floor(Math.random() * ART_IMAGES.length)];
+      if (el) el.style.background = `#0c0a08 url('${url}') center/cover`;
+    })();
+    function toggleTheme() {
+      const h = document.documentElement;
+      const next = h.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      h.setAttribute('data-theme', next);
+      localStorage.setItem('raon_theme', next);
+      document.getElementById('themeBtn').textContent = next === 'dark' ? '☀️' : '🌙';
+    }
+    (function initTheme(){ const t = localStorage.getItem('raon_theme')||'light';
+      document.documentElement.setAttribute('data-theme', t);
+      document.getElementById('themeBtn').textContent = t==='dark'?'☀️':'🌙'; })();
+    function showError(m){ const e=document.getElementById('errorMsg'); e.textContent=m; e.classList.add('show'); }
+
     async function memberLogin(e) {
       e.preventDefault();
-      const btn = document.getElementById('ml-btn'); const err = document.getElementById('ml-err');
-      btn.disabled = true; btn.textContent = '로그인 중…'; err.textContent = '';
+      const btn = document.getElementById('ml-btn');
+      btn.disabled = true; btn.textContent = '로그인 중…';
+      document.getElementById('errorMsg').classList.remove('show');
       try {
         const r = await fetch('/api/auth/login', {
           method:'POST', headers:{'Content-Type':'application/json'},
@@ -70,7 +145,8 @@
             password: document.getElementById('ml-pw').value })
         });
         const d = await r.json();
-        if (!r.ok) { err.textContent = d.detail || '로그인 정보가 올바르지 않습니다.'; btn.disabled=false; btn.textContent='로그인'; return; }
+        if (!r.ok) { showError(d.detail || '로그인 정보가 올바르지 않습니다.');
+          btn.disabled=false; btn.textContent='로그인'; return; }
         const keep = document.getElementById('ml-keep').checked;
         if (keep) localStorage.setItem('raon_token', d.token);
         else { sessionStorage.setItem('raon_token', d.token); localStorage.removeItem('raon_token'); }
@@ -79,12 +155,11 @@
         localStorage.setItem('raon_branch', d.branch || '');
         localStorage.setItem('raon_admin', '');
         localStorage.setItem('raon_roles', '[]');
-        localStorage.setItem('raon_portal', 'member');   // 로그아웃 시 회원화면으로
+        localStorage.setItem('raon_portal', 'member');
         if (TOKEN) localStorage.setItem('raon_branch_token', TOKEN);
         location.href = '/home';
-      } catch (e2) { err.textContent = '네트워크 오류가 발생했습니다.'; btn.disabled=false; btn.textContent='로그인'; }
+      } catch (e2) { showError('네트워크 오류가 발생했습니다.'); btn.disabled=false; btn.textContent='로그인'; }
     }
-    // 이미 로그인돼 있으면 홈으로
     if (localStorage.getItem('raon_token') || sessionStorage.getItem('raon_token')) location.href='/home';
   </script>
 </body>
