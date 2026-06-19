@@ -334,10 +334,17 @@ async def login_page(request: Request):
 
 
 @app.get("/login/member")
-async def login_member_page(request: Request):
-    """회원 로그인 (QR 접속 대상)"""
-    return templates.TemplateResponse(request=request, name="login.html",
-        context={"login_role": "member"})
+async def login_member_page(request: Request, b: str = ""):
+    """회원 전용 로그인 (QR/링크 접속 대상, 지점 토큰으로 가입신청 잠금)"""
+    branch = verify_branch_token(b) if b else ""
+    return templates.TemplateResponse(request=request, name="member_login.html",
+        context={"branch": branch or "", "token": b})
+
+
+@app.get("/m")
+async def member_portal_alias(request: Request, b: str = ""):
+    """짧은 회원 진입 주소 → 회원 로그인으로."""
+    return RedirectResponse(f"/login/member?b={b}" if b else "/login/member")
 
 
 @app.get("/home")

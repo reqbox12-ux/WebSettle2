@@ -36,13 +36,19 @@
     const eff = u.effectiveRoles || [];
     return allowed.some(r => eff.includes(r));
   }
+  function memberLoginUrl() {
+    const bt = localStorage.getItem('raon_branch_token') || '';
+    return bt ? ('/login/member?b=' + encodeURIComponent(bt)) : '/login/member';
+  }
   function logout() {
+    // 역할 판별 후 분기 (회원=회원 로그인 / 직원=직원 로그인)
+    const isMember = (localStorage.getItem('raon_portal') === 'member')
+      || (localStorage.getItem('raon_role') === 'member');
+    const dest = isMember ? memberLoginUrl() : '/login';
     fetch('/api/auth/logout', { method: 'POST' }).finally(() => {
-      ['raon_token','raon_role','raon_name','raon_branch','raon_admin','raon_admin_branch','raon_roles'].forEach(k => {
-        localStorage.removeItem(k);
-        sessionStorage.removeItem(k);
-      });
-      window.location.href = '/login';
+      ['raon_token','raon_role','raon_name','raon_branch','raon_admin','raon_admin_branch','raon_roles','raon_portal']
+        .forEach(k => { localStorage.removeItem(k); sessionStorage.removeItem(k); });
+      window.location.href = dest;
     });
   }
   async function api(path, opts = {}) {
@@ -171,7 +177,10 @@
   let currentPage = window.INITIAL_PAGE || 'home';
   const user = getUser();
 
-  if (!getToken()) { window.location.href = '/login'; }
+  if (!getToken()) {
+    const isMember = localStorage.getItem('raon_portal') === 'member';
+    window.location.href = isMember ? memberLoginUrl() : '/login';
+  }
 
   // 접근 불가 페이지로 진입 시 홈으로 폴백
   if (PAGES[currentPage] && !canAccessPage(PAGES[currentPage], user)) {
@@ -3188,11 +3197,11 @@
         </div>
       </div>`;
     if (window.lucide) lucide.createIcons();
-    // 지점 전용 가입 QR — 지점 토큰 포함 (다른 지점 가입 불가)
-    let portalUrl = location.origin + '/signup';
+    // 지점 전용 회원 포털 QR — 로그인+가입신청, 지점 토큰 포함 (타 지점 접근 불가)
+    let portalUrl = location.origin + '/login/member';
     try {
       const tr = await api('/api/branch-token');
-      if (tr && tr.ok) { const t = await tr.json(); portalUrl = location.origin + '/signup?b=' + encodeURIComponent(t.token); }
+      if (tr && tr.ok) { const t = await tr.json(); portalUrl = location.origin + '/login/member?b=' + encodeURIComponent(t.token); }
     } catch (e) {}
     const qrSrc = `https://api.qrserver.com/v1/create-qr-code/?size=240x240&margin=8&data=${encodeURIComponent(portalUrl)}`;
     const img = document.getElementById('qr-img');
