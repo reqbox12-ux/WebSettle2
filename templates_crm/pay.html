@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>라온스포츠 결제</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+  <script src="https://js.tosspayments.com/v2/standard"></script>
+  <style>
+    *{box-sizing:border-box;margin:0;padding:0;font-family:'Pretendard',sans-serif}
+    body{background:#FAF7F5;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px 12px}
+    .card{background:#fff;border-radius:20px;box-shadow:0 8px 40px rgba(0,0,0,.08);
+      width:min(440px,96vw);padding:32px 26px;text-align:center}
+    .logo{margin-bottom:2px}
+    .logo img{height:34px;object-fit:contain}
+    .sub{font-size:12.5px;color:#9A918C;margin-bottom:24px}
+    .prod{font-size:16px;font-weight:700;color:#1F1B1B;margin-bottom:4px}
+    .amt{font-size:30px;font-weight:900;color:#1F1B1B;letter-spacing:-.03em;margin-bottom:4px}
+    .br{font-size:12.5px;color:#9A918C;margin-bottom:24px}
+    .btn{width:100%;padding:16px;border:none;border-radius:12px;background:#E60028;color:#fff;
+      font-size:16px;font-weight:800;cursor:pointer}
+    .btn:disabled{opacity:.5}
+    .msg{margin-top:16px;font-size:13px;line-height:1.6}
+    .err{color:#E60028}.ok{color:#2E7D5B}
+    #payment-method,#agreement{margin-top:6px;text-align:left}
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="logo"><img src="/static/img/logo.png" alt="LAONSPORTS"></div>
+    <div class="sub">안전한 결제 (토스페이먼츠)</div>
+
+    {% if error %}
+      <div class="msg err">⚠️ {{ error }}</div>
+    {% elif already %}
+      <div class="prod">{{ order.product_name }}</div>
+      <div class="amt">{{ "{:,}".format(order.amount) }}원</div>
+      <div class="msg ok">✅ 이미 결제가 완료된 주문입니다.</div>
+    {% else %}
+      <div class="prod">{{ order.product_name }}</div>
+      <div class="amt">{{ "{:,}".format(order.amount) }}원</div>
+      <div class="br">라온스포츠 · {{ order.branch }}{% if order.member_name %} · {{ order.member_name }}님{% endif %}</div>
+      <div id="payment-method"></div>
+      <div id="agreement"></div>
+      <button class="btn" id="payBtn" disabled>결제하기</button>
+      <div class="msg" id="msg"></div>
+    {% endif %}
+  </div>
+
+  {% if order and not error and not already %}
+  <script>
+    const CLIENT_KEY = "{{ client_key }}";
+    const ORDER = {
+      orderId: "{{ order.order_id }}",
+      amount: {{ order.amount }},
+      orderName: "{{ order.product_name }}",
+      customerName: "{{ order.member_name }}",
+    };
+    const msgEl = document.getElementById('msg');
+    const btn = document.getElementById('payBtn');
+
+    // ── 결제창에서 돌아온 경우(successUrl) → 승인 확정 ──
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('paymentKey')) {
+      btn.style.display = 'none';
+      msgEl.textContent = '결제 승인 처리 중…';
+      fetch('/api/pay/confirm', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          order_id: qs.get('orderId'), payment_key: qs.get('paymentKey'),
+          amount: parseInt(qs.get('amount'))
+        })
+      }).then(async r => {
+        const d = await r.json().catch(()=>({}));
+        if (r.ok) { msgEl.className='msg ok'; msgEl.innerHTML='✅ 결제가 완료되었습니다!<br>이용해 주셔서 감사합니다.'; }
+        else { msgEl.className='msg err'; msgEl.textContent='⚠️ ' + (d.detail||'승인 실패'); btn.style.display='block'; }
+      });
+    } else if (qs.get('code')) {
+      msgEl.className='msg err';
+      msgEl.textContent = '⚠️ 결제가 취소되었거나 실패했습니다. (' + (qs.get('message')||qs.get('code')) + ')';
+    } else if (!CLIENT_KEY) {
+      msgEl.className='msg err';
+      msgEl.textContent = '토스 키가 설정되지 않았습니다. 관리자에게 문의하세요.';
+    } else {
+      // ── v2 결제위젯 (widgets) — 토스 개발자센터 등록 UI(variantKey) 사용 ──
+      const VARIANT_KEY = "{{ variant_key }}" || 'widgetA';   // 설정에서 입력
+      (async () => {
+        try {
+          const tossPayments = TossPayments(CLIENT_KEY);
+          const widgets = tossPayments.widgets({ customerKey: TossPayments.ANONYMOUS });
+          await widgets.setAmount({ currency: 'KRW', value: ORDER.amount });
+          await Promise.all([
+            widgets.renderPaymentMethods({ selector: '#payment-method', variantKey: VARIANT_KEY }),
+            widgets.renderAgreement({ selector: '#agreement', variantKey: 'AGREEMENT' }),
+          ]);
+          btn.disabled = false;
+          const base = location.origin + location.pathname;
+          btn.addEventListener('click', async () => {
+            btn.disabled = true;
+            try {
+              await widgets.requestPayment({
+                orderId: ORDER.orderId,
+                orderName: ORDER.orderName,
+                customerName: ORDER.customerName || '회원',
+                successUrl: base,
+                failUrl: base + '?code=FAIL',
+              });
+            } catch (e) {
+              btn.disabled = false;
+              if (e.code !== 'USER_CANCEL') { msgEl.className='msg err'; msgEl.textContent = '⚠️ ' + (e.message||'결제 요청 실패'); }
+            }
+          });
+        } catch (e) {
+          msgEl.className='msg err';
+          msgEl.textContent = '⚠️ 결제 위젯 로드 실패: ' + (e.message||e);
+        }
+      })();
+    }
+  </script>
+  {% endif %}
+</body>
+</html>

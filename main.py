@@ -6,24 +6,18 @@ DB·비즈니스 로직: 기존 WEBAPP 폴더의 모듈을 그대로 재사용 (
 from __future__ import annotations
 
 import os
-import sys
 import time
 from pathlib import Path
 
-# ── 기존 WEBAPP 모듈 재사용 (집계 로직 공유) ────────────────────
-BASE_DIR   = Path(__file__).parent
-WEBAPP_DIR = (BASE_DIR.parent / "WEBAPP")
-if not WEBAPP_DIR.exists():
-    # NAS Docker 환경: /app/legacy 로 마운트
-    WEBAPP_DIR = Path("/app/legacy")
-sys.path.insert(0, str(WEBAPP_DIR))
+# ── 통합 레포(WebSettle2): domains/modules/shared 가 로컬에 존재 (자립형) ──────────
+# 더 이상 외부 WEBAPP(/app/legacy)에 의존하지 않음.
+BASE_DIR = Path(__file__).parent
 
-# ── DB 선택 ───────────────────────────────────────────────────
-# WEBAPP2/data/settlement.db 가 있으면 그것을 사용 (독립 DB 모드)
-# 없으면 기존 WEBAPP/data/settlement.db 공유 (기본)
-# SETTLEMENT_DB 환경변수가 이미 설정돼 있으면 그것을 최우선
+# ── DB 경로 ───────────────────────────────────────────────────
+# 기본: <repo>/data/settlement.db  (modules.db 가 동일하게 해석 → CRM과 공유)
+# SETTLEMENT_DB 환경변수가 있으면 최우선 (운영/검증 환경 분리용)
 _LOCAL_DB = BASE_DIR / "data" / "settlement.db"
-if not os.getenv("SETTLEMENT_DB") and _LOCAL_DB.exists():
+if not os.getenv("SETTLEMENT_DB"):
     os.environ["SETTLEMENT_DB"] = str(_LOCAL_DB)
 
 from fastapi import FastAPI, Request, HTTPException
@@ -208,6 +202,272 @@ async def api_summary_excel(request: Request, year: int, month: int):
         headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
 
 
+# ── 실시간 매출(CRM 연동) 대시보드 ────────────────────────────
+@app.get("/api/live/sales")
+async def api_live_sales(request: Request, year: int, month: int):
+    """CRM에서 실시간으로 쌓이는 결제(sales) 집계 — 업로드 데이터와 별개."""
+    require_auth(request)
+    from modules.db import get_conn
+    from datetime import datetime as _dt
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    today = _dt.now().strftime("%Y-%m-%d")
+
+    # 환불 표시(pay_method LIKE '%환불%')는 제외
+    base = "FROM sales WHERE sale_date LIKE ? AND pay_method NOT LIKE '%환불%'"
+    rows_branch = conn.execute(
+        f"SELECT branch, SUM(amount) amt, COUNT(*) cnt {base} GROUP BY branch ORDER BY amt DESC",
+        (f"{prefix}%",)).fetchall()
+    by_cat = conn.execute(
+        f"SELECT category, SUM(amount) amt {base} GROUP BY category", (f"{prefix}%",)).fetchall()
+    by_pay = conn.execute(
+        f"SELECT pay_method, SUM(amount) amt {base} GROUP BY pay_method", (f"{prefix}%",)).fetchall()
+    by_day = conn.execute(
+        f"SELECT substr(sale_date,1,10) d, SUM(amount) amt {base} GROUP BY d ORDER BY d",
+        (f"{prefix}%",)).fetchall()
+    today_total = conn.execute(
+        "SELECT COALESCE(SUM(amount),0) FROM sales WHERE sale_date=? AND pay_method NOT LIKE '%환불%'",
+        (today,)).fetchone()[0]
+    recent = conn.execute(
+        f"SELECT sale_date, branch, member_name, product_name, category, amount, pay_method, sold_by "
+        f"FROM sales WHERE sale_date LIKE ? AND pay_method NOT LIKE '%환불%' "
+        f"ORDER BY id DESC LIMIT 30", (f"{prefix}%",)).fetchall()
+    conn.close()
+
+    # 지점 목표 (branch_goals)
+    from modules.db import get_branch_goals
+    goals = get_branch_goals(year, month)
+
+    month_total = sum(r[1] or 0 for r in rows_branch)
+    cat_lbl = {"gx": "GX", "lesson": "레슨(PT·골프)", "goods": "상품"}
+    return {
+        "month_total": month_total,
+        "today_total": today_total,
+        "tx_count": sum(r[2] or 0 for r in rows_branch),
+        "by_branch": [{"branch": r[0], "amount": r[1] or 0, "count": r[2] or 0,
+                       "goal": goals.get(r[0], 0)} for r in rows_branch],
+        "by_category": [{"label": cat_lbl.get(r[0], r[0] or "기타"), "amount": r[1] or 0} for r in by_cat],
+        "by_pay": [{"label": r[0] or "기타", "amount": r[1] or 0} for r in by_pay],
+        "by_day": [{"date": r[0], "amount": r[1] or 0} for r in by_day],
+        "recent": [{"date": r[0], "branch": r[1], "member": r[2], "product": r[3],
+                    "category": cat_lbl.get(r[4], r[4] or ""), "amount": r[5],
+                    "pay": r[6], "by": r[7]} for r in recent],
+    }
+
+
+# ── 관리비 청구서 (관리비청구 결제 모음) ──────────────────────
+@app.get("/api/mgmt-fee")
+async def api_mgmt_fee(request: Request, year: int, month: int, branch: str = ""):
+    """관리비청구로 결제된 매출을 지점별로 집계 (아파트 청구서용)."""
+    require_auth(request)
+    from modules.db import get_conn
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    q = ("SELECT branch, category, product_name, member_name, amount, sale_date "
+         "FROM sales WHERE sale_date LIKE ? AND is_mgmt_fee=1 AND pay_method NOT LIKE '%환불%'")
+    args = [f"{prefix}%"]
+    if branch:
+        q += " AND branch=?"; args.append(branch)
+    q += " ORDER BY branch, category, sale_date"
+    rows = conn.execute(q, args).fetchall()
+    conn.close()
+
+    cat_lbl = {"gx": "GX 프로그램", "lesson": "레슨(PT·골프)", "goods": "상품"}
+    by_branch = {}
+    for br, cat, pname, mname, amt, sd in rows:
+        b = by_branch.setdefault(br, {"branch": br, "total": 0, "items": []})
+        b["total"] += int(amt or 0)
+        b["items"].append({"category": cat_lbl.get(cat, cat or "기타"), "product": pname,
+                           "member": mname, "amount": int(amt or 0), "date": (sd or "")[:10]})
+    return {"branches": list(by_branch.values()),
+            "grand_total": sum(b["total"] for b in by_branch.values())}
+
+
+@app.get("/api/mgmt-fee/excel")
+async def api_mgmt_fee_excel(request: Request, year: int, month: int, branch: str):
+    """지점(아파트)별 관리비 청구서 Excel."""
+    require_auth(request)
+    import io, pandas as pd
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+    from modules.db import get_conn
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    rows = conn.execute(
+        "SELECT category, product_name, member_name, amount, sale_date FROM sales "
+        "WHERE sale_date LIKE ? AND is_mgmt_fee=1 AND branch=? AND pay_method NOT LIKE '%환불%' "
+        "ORDER BY category, sale_date", (f"{prefix}%", branch)).fetchall()
+    conn.close()
+    if not rows:
+        raise HTTPException(404, "해당 지점의 관리비 청구 내역이 없습니다")
+    cat_lbl = {"gx": "GX 프로그램", "lesson": "레슨(PT·골프)", "goods": "상품"}
+    df = pd.DataFrame([{
+        "일자": (r[4] or "")[:10], "분류": cat_lbl.get(r[0], r[0]),
+        "항목": r[1], "회원": r[2], "금액": int(r[3] or 0),
+    } for r in rows])
+    total = int(df["금액"].sum())
+    df.loc[len(df)] = ["", "", "합계", "", total]
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name="관리비청구", index=False)
+    buf.seek(0)
+    fn = quote(f"관리비청구서_{branch}_{year}년{month:02d}월.xlsx")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
+
+
+# ── CRM 페이롤 → ERP 급여 가져오기 ────────────────────────────
+def _crm_payroll_rows(year: int, month: int):
+    """확정된 CRM 페이롤을 직원별로 ERP 급여 지급액(세전)으로 변환."""
+    from domains.branch_app.crm_ext import get_crm_payroll
+    from modules.db import get_conn
+    cp = get_crm_payroll(year, month)
+    conn = get_conn()
+    out = []
+    for r in cp:
+        if r.get("status") != "confirmed":
+            continue
+        eid = r["employee_id"]
+        emp = conn.execute(
+            "SELECT name, branch, emp_type, base_salary, COALESCE(work_type,'commute') "
+            "FROM employees WHERE id=?", (eid,)).fetchone()
+        if not emp:
+            continue
+        name, branch, emp_type, base_salary, work_type = emp
+        crm_total = int(r.get("total_amount", 0) or 0)
+        base = int(base_salary or 0)
+        # 출퇴근형 = 기본급 + 수업료 / 프리랜서형 = 수업료만
+        gross = (base + crm_total) if work_type == "commute" else crm_total
+        out.append({
+            "employee_id": eid, "name": name, "branch": branch, "emp_type": emp_type,
+            "work_type": work_type, "base_salary": base,
+            "pt_amount": int(r.get("pt_amount", 0) or 0),
+            "gx_amount": int(r.get("gx_amount", 0) or 0),
+            "crm_total": crm_total, "suggested_gross": gross,
+        })
+    conn.close()
+    return out
+
+
+@app.get("/api/payroll/crm-import")
+async def api_payroll_crm_import(request: Request, year: int, month: int):
+    require_auth(request)
+    return _crm_payroll_rows(year, month)
+
+
+@app.get("/api/payroll/crm-import/excel")
+async def api_payroll_crm_excel(request: Request, year: int, month: int):
+    require_auth(request)
+    import io, pandas as pd
+    from fastapi.responses import StreamingResponse
+    from urllib.parse import quote
+    rows = _crm_payroll_rows(year, month)
+    if not rows:
+        raise HTTPException(404, "확정된 CRM 페이롤이 없습니다")
+    wt = {"commute": "출퇴근형", "freelance": "프리랜서형"}
+    df = pd.DataFrame([{
+        "직원ID": r["employee_id"], "이름": r["name"], "지점": r["branch"],
+        "고용형태": wt.get(r["work_type"], r["work_type"]),
+        "기본급": r["base_salary"], "PT수업료": r["pt_amount"], "GX수업료": r["gx_amount"],
+        "CRM합계": r["crm_total"], "급여지급액(세전)": r["suggested_gross"],
+    } for r in rows])
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name=f"{year}년{month:02d}월", index=False)
+    buf.seek(0)
+    fn = quote(f"CRM페이롤_{year}년{month:02d}월.xlsx")
+    return StreamingResponse(
+        buf, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{fn}"})
+
+
+# ── 카드사 매출 대사 (Reconciliation) ─────────────────────────
+@app.get("/api/recon")
+async def api_recon(request: Request, year: int, month: int):
+    """CRM 카드결제 합계 vs 카드사 업로드 매출 합계를 지점별 비교."""
+    require_auth(request)
+    from modules.db import get_conn
+    conn = get_conn()
+    prefix = f"{year}-{month:02d}"
+    # CRM: 카드/토스 결제 (환불 제외)
+    crm = dict(conn.execute(
+        "SELECT branch, COALESCE(SUM(amount),0) FROM sales "
+        "WHERE sale_date LIKE ? AND pay_method IN ('카드','토스') AND pay_method NOT LIKE '%환불%' "
+        "GROUP BY branch", (f"{prefix}%",)).fetchall())
+    # 카드사 업로드: card_sales (total_amount = VAT 포함 총액)
+    card = dict(conn.execute(
+        "SELECT branch, COALESCE(SUM(total_amount),0) FROM card_sales "
+        "WHERE year=? AND month=? GROUP BY branch", (year, month)).fetchall())
+    conn.close()
+
+    branches = sorted(set(crm) | set(card))
+    rows = []
+    for b in branches:
+        c = int(crm.get(b, 0)); k = int(card.get(b, 0))
+        diff = c - k
+        # 카드 수수료(~2-3%) 감안: 절대차가 카드사액의 5% 이내면 '정상'
+        tol = max(int(k * 0.05), 1000)
+        status = "match" if abs(diff) <= tol else ("crm_more" if diff > 0 else "card_more")
+        rows.append({"branch": b, "crm": c, "card": k, "diff": diff, "status": status})
+    return {
+        "rows": rows,
+        "total_crm": sum(r["crm"] for r in rows),
+        "total_card": sum(r["card"] for r in rows),
+        "mismatch": sum(1 for r in rows if r["status"] != "match"),
+    }
+
+
+# ── 월 마감(락) ───────────────────────────────────────────────
+@app.get("/api/locks")
+async def api_locks_get(request: Request, year: int = 0):
+    require_auth(request)
+    from domains.branch_app.ops import list_locks
+    return list_locks(year or None)
+
+
+class LockBody(BaseModel):
+    year:   int
+    month:  int
+    branch: str = ""   # 빈값=전사
+
+
+@app.post("/api/locks")
+async def api_lock(request: Request, body: LockBody):
+    user = require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(403, "관리자만 마감할 수 있습니다")
+    from domains.branch_app.ops import lock_month, log_action
+    lock_month(body.year, body.month, body.branch, user["name"])
+    log_action(user["name"], "month.lock",
+               target=f"{body.year}-{body.month:02d} {body.branch or '전사'}",
+               actor_role="admin")
+    _clear_cache()
+    return {"ok": True}
+
+
+@app.delete("/api/locks")
+async def api_unlock(request: Request, year: int, month: int, branch: str = ""):
+    user = require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(403, "관리자만 가능합니다")
+    from domains.branch_app.ops import unlock_month, log_action
+    unlock_month(year, month, branch)
+    log_action(user["name"], "month.unlock", target=f"{year}-{month:02d} {branch or '전사'}",
+               actor_role="admin")
+    return {"ok": True}
+
+
+# ── 감사 로그 조회 ────────────────────────────────────────────
+@app.get("/api/audit")
+async def api_audit(request: Request, action: str = "", limit: int = 200):
+    user = require_auth(request)
+    if user.get("role") != "admin":
+        raise HTTPException(403, "관리자 전용")
+    from domains.branch_app.ops import get_audit_logs
+    return get_audit_logs(action=action, limit=limit)
+
+
 # ── 지점 상세 API ─────────────────────────────────────────────
 @app.get("/api/branches")
 async def api_branches(request: Request):
@@ -308,8 +568,29 @@ async def api_att_branches(request: Request):
 @app.get("/api/employees")
 async def api_employees(request: Request):
     require_auth(request)
-    from domains.payroll.db import get_all_employees
-    return get_all_employees()
+    from domains.payroll.db import get_all_employees, get_employee_roles, ROLE_LABELS
+    emps = get_all_employees()
+    for e in emps:
+        roles = get_employee_roles(e["id"])
+        e["roles"] = roles
+        e["role_labels"] = [ROLE_LABELS.get(r, r) for r in roles]
+    return emps
+
+
+@app.get("/api/roles/meta")
+async def api_roles_meta(request: Request):
+    """CRM 직무 메타 — ERP 직원편집 UI의 직무 선택용."""
+    require_auth(request)
+    from domains.payroll.db import ROLE_LABELS
+    return [{"value": k, "label": v} for k, v in ROLE_LABELS.items()]
+
+
+@app.get("/api/payroll/crm-confirmed")
+async def api_crm_payroll_confirmed(request: Request, year: int, month: int):
+    """CRM에서 확정된 강사 수업 보수 — ERP에서 조회 (읽기 전용)."""
+    require_auth(request)
+    from domains.branch_app.crm_ext import get_crm_payroll
+    return [r for r in get_crm_payroll(year, month) if r.get("status") == "confirmed"]
 
 
 # ── 데이터 업로드 API ─────────────────────────────────────────
@@ -729,17 +1010,28 @@ class EmployeeBody(BaseModel):
     hourly_rate: int = 0
     join_date:   str = ""
     note:        str = ""
+    id_number:   str = ""               # 주민번호 → person_uid(멀티지점 묶음 키)
+    account_no:  str = ""               # 계좌번호 (암호화 저장)
+    roles:       list[str] = []         # CRM 직무 (최대 2개)
+    commission_percent: float = 0       # 트레이너/프로 %정산 개인요율
+    work_type:   str = "commute"        # 'commute'(출퇴근/기본급+수업료) | 'freelance'(수업료만)
 
 
 @app.post("/api/employees")
 async def api_emp_upsert(request: Request, body: EmployeeBody):
     require_auth(request)
-    from domains.payroll.db import upsert_employee, create_employee_account, get_employee_account
+    from domains.payroll.db import (
+        upsert_employee, create_employee_account, get_employee_account,
+        set_employee_roles,
+    )
     data = body.dict()
+    data["meal_allowance"] = data.pop("meal", 0)
     data["is_active"] = 1
     if not data["id"]:
         data.pop("id")
     eid = upsert_employee(data)
+    # CRM 직무 설정 (최대 2개)
+    saved_roles = set_employee_roles(eid, body.roles)
     # 전화번호 있으면 포털 계정 자동 생성
     phone = body.phone.replace("-", "").replace(" ", "")
     acc_msg = ""
@@ -747,7 +1039,7 @@ async def api_emp_upsert(request: Request, body: EmployeeBody):
         ok, _ = create_employee_account(eid, phone, phone[-4:])
         if ok:
             acc_msg = f"포털 계정 생성: {phone} / 초기PW {phone[-4:]}"
-    return {"id": eid, "account": acc_msg}
+    return {"id": eid, "account": acc_msg, "roles": saved_roles}
 
 
 @app.delete("/api/employees/{emp_id}")

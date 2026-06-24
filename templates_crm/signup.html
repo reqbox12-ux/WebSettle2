@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="ko" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1">
+  <title>회원가입 — 라온스포츠</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+  <link rel="stylesheet" href="/static/css/landing.css?v={{ asset_ver }}">
+  <style>
+    body { display:flex; align-items:center; justify-content:center; min-height:100vh; padding:18px; }
+    .su-card { width:min(440px,96vw); background:var(--surface,#fff); border-radius:18px;
+      box-shadow:0 16px 50px rgba(0,0,0,.18); padding:26px 24px; }
+    .su-card h1 { font-size:22px; font-weight:900; margin:0 0 4px; }
+    .su-branch { color:#E60028; font-weight:800; }
+    .su-field { margin-bottom:12px; }
+    .su-field label { display:block; font-size:13px; font-weight:600; margin-bottom:5px; }
+    .su-field input { width:100%; padding:12px 14px; border:1.5px solid rgba(128,128,128,.3);
+      border-radius:10px; font-size:14px; background:transparent; color:inherit; }
+    .su-row { display:flex; gap:8px; }
+    .su-btn { width:100%; height:48px; border:0; border-radius:12px; background:#E60028; color:#fff;
+      font-size:15px; font-weight:800; cursor:pointer; margin-top:8px; }
+    .su-msg { font-size:13px; margin-top:10px; min-height:18px; }
+    .su-kid { border:1px dashed rgba(128,128,128,.4); border-radius:10px; padding:10px; margin-top:6px; }
+  </style>
+</head>
+<body>
+  <div class="su-card">
+    {% if not valid %}
+      <h1>가입 링크 오류</h1>
+      <p class="sub">유효하지 않은 가입 링크입니다.<br>지점에 비치된 <b>QR코드</b> 또는 문자로 받은 링크로 접속해 주세요.</p>
+    {% else %}
+      <h1>회원가입</h1>
+      <p class="sub"><span class="su-branch">{{ branch }}</span> 지점 가입 신청</p>
+      <form id="suForm" onsubmit="submitSignup(event)" style="margin-top:14px">
+        <div class="su-field"><label>이름 *</label><input id="su-name" required></div>
+        <div class="su-field"><label>전화번호 *</label><input id="su-phone" placeholder="01012345678" required></div>
+        <div class="su-row">
+          <div class="su-field" style="flex:1"><label>동</label><input id="su-dong" placeholder="101"></div>
+          <div class="su-field" style="flex:1"><label>호</label><input id="su-ho" placeholder="1502"></div>
+        </div>
+        <div class="su-field">
+          <label>자녀(키즈 수업용, 선택)</label>
+          <div class="su-kid">
+            <div class="su-row">
+              <input id="su-kid-name" placeholder="아이 이름" style="flex:2">
+              <input id="su-kid-age" placeholder="나이" type="number" style="flex:1">
+            </div>
+          </div>
+        </div>
+        <button class="su-btn" type="submit" id="suBtn">가입 신청</button>
+        <div class="su-msg" id="suMsg"></div>
+      </form>
+      <p class="sub" style="font-size:12px;margin-top:10px">신청 후 지점 승인이 완료되면, <b>전화번호 뒷 4자리</b>로 로그인할 수 있습니다.</p>
+    {% endif %}
+  </div>
+  <script>
+    const TOKEN = "{{ token }}";
+    async function submitSignup(e) {
+      e.preventDefault();
+      const btn = document.getElementById('suBtn'); const msg = document.getElementById('suMsg');
+      btn.disabled = true; msg.textContent = '';
+      const kidName = document.getElementById('su-kid-name').value.trim();
+      const kidAge  = document.getElementById('su-kid-age').value.trim();
+      const kids = kidName ? JSON.stringify([{name:kidName, age:kidAge}]) : '';
+      try {
+        const r = await fetch('/api/signup/request', {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ token: TOKEN,
+            name: document.getElementById('su-name').value.trim(),
+            phone: document.getElementById('su-phone').value.trim(),
+            dong: document.getElementById('su-dong').value.trim(),
+            ho: document.getElementById('su-ho').value.trim(), kids })
+        });
+        const d = await r.json();
+        if (!r.ok) { msg.style.color='#E60028'; msg.textContent = d.detail || '신청 실패'; btn.disabled=false; return; }
+        document.getElementById('suForm').innerHTML =
+          '<div style="text-align:center;padding:20px 0"><div style="font-size:40px">✅</div>' +
+          '<div style="font-weight:800;margin-top:8px">가입 신청 완료</div>' +
+          '<div class="sub" style="margin-top:6px">'+ (d.msg||'') +'</div></div>';
+      } catch (err) { msg.style.color='#E60028'; msg.textContent='네트워크 오류'; btn.disabled=false; }
+    }
+  </script>
+</body>
+</html>

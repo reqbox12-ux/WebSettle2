@@ -5,3 +5,8 @@ pandas
 openpyxl
 bcrypt
 python-multipart
+python-jose[cryptography]
+cryptography
+requests
+sqlalchemy
+psycopg2-binary

@@ -1,0 +1,1235 @@
+"""
+domains/branch_app/crm_ext.py — CRM 확장 스키마/로직 (Phase 3~6)
+
+- Phase 3: 상품 정산설정(products.pay_type/session_rate), GX 구간제(gx_pay_rules), 결제수단/VAT
+- Phase 4: PT/레슨 라이프사이클(lesson_enrollments, lesson_sessions, 회원 서명)
+- Phase 5: GX 출석(gx_enrollments, gx_attendance), 프로필/커리큘럼/피드백
+- Phase 6: 페이롤 집계(crm_payroll), 일일보고/환불/민원/의견, 재고 임계치
+"""
+from shared.db import get_conn
+
+
+from shared.crypto import dec_row as _dec_row
+
+
+def _rows(cur):
+    cols = [d[0] for d in cur.description]
+    return [_dec_row(dict(zip(cols, r))) for r in cur.fetchall()]
+
+
+def _one(cur):
+    cols = [d[0] for d in cur.description]
+    row = cur.fetchone()
+    return _dec_row(dict(zip(cols, row))) if row else None
+
+
+def init_crm_ext_tables():
+    conn = get_conn()
+
+    # ── Phase 3: 상품 정산설정 ───────────────────────────────
+    pcols = [r[1] for r in conn.execute("PRAGMA table_info(products)").fetchall()]
+    if "pay_type" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pay_type TEXT DEFAULT ''")     # 'percent'|'per_session'|''
+    if "session_rate" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN session_rate INTEGER DEFAULT 0")
+    if "instructor_employee_id" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN instructor_employee_id INTEGER DEFAULT 0")  # GX 담당강사
+    # GX 최소/최대 인원 + 수강권 방식(횟수권/기간권)
+    if "min_headcount" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN min_headcount INTEGER DEFAULT 0")   # GX 최소개강 인원
+    if "max_headcount" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN max_headcount INTEGER DEFAULT 0")   # GX 최대 인원(0=capacity)
+    if "pass_type" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pass_type TEXT DEFAULT 'count'")    # 'count'|'period'
+    if "pass_count" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pass_count INTEGER DEFAULT 0")      # 횟수권 횟수
+    if "pass_days" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pass_days INTEGER DEFAULT 30")      # 기간권 일수
+
+    # 지점 입금계좌 (계좌이체 안내문자용) — branches 테이블 있을 때만(빈 DB 설치 대비)
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='branches'").fetchone():
+        bcols = [r[1] for r in conn.execute("PRAGMA table_info(branches)").fetchall()]
+        for col in ("bank", "account_no", "account_holder"):
+            if col not in bcols:
+                conn.execute(f"ALTER TABLE branches ADD COLUMN {col} TEXT DEFAULT ''")
+
+    # 토스 결제위젯 variantKey
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='payment_config'").fetchone():
+        pcc = [r[1] for r in conn.execute("PRAGMA table_info(payment_config)").fetchall()]
+        if "toss_variant_key" not in pcc:
+            conn.execute("ALTER TABLE payment_config ADD COLUMN toss_variant_key TEXT DEFAULT 'widgetA'")
+
+    # GX 가변요금 적용 토글
+    if "prorate" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN prorate INTEGER DEFAULT 0")
+    # 상품별 허용 결제수단 (쉼표구분, 빈값=전체 허용)
+    if "pay_methods" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN pay_methods TEXT DEFAULT ''")
+    # GX 1회 단가 + 운영요일 비트(월화수목금토일) — 횟수권 자동집계용
+    if "unit_price" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN unit_price INTEGER DEFAULT 0")
+    if "weekday_bits" not in pcols:
+        conn.execute("ALTER TABLE products ADD COLUMN weekday_bits TEXT DEFAULT ''")  # 예 '0,2,4'
+
+    # is_test 태그 (테스트모드 데이터 격리) — 운영 집계는 is_test=0만
+    for tbl in ("sales", "payment_orders", "gx_enrollments", "gx_applications",
+                "lesson_enrollments", "gx_sessions", "refunds"):
+        try:
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
+            if cols and "is_test" not in cols:
+                conn.execute(f"ALTER TABLE {tbl} ADD COLUMN is_test INTEGER DEFAULT 0")
+        except Exception:
+            pass
+    # gx_enrollments 월별 수강 분리 (target_ym)
+    gcols = [r[1] for r in conn.execute("PRAGMA table_info(gx_enrollments)").fetchall()]
+    if gcols and "target_ym" not in gcols:
+        conn.execute("ALTER TABLE gx_enrollments ADD COLUMN target_ym TEXT DEFAULT ''")
+    # payment_orders 대상연월(결제 후 수강 생성 달)
+    ocols = [r[1] for r in conn.execute("PRAGMA table_info(payment_orders)").fetchall()]
+    if ocols and "target_ym" not in ocols:
+        conn.execute("ALTER TABLE payment_orders ADD COLUMN target_ym TEXT DEFAULT ''")
+    # gx_applications 월별 대기신청 분리 (target_ym)
+    acols = [r[1] for r in conn.execute("PRAGMA table_info(gx_applications)").fetchall()]
+    if acols and "target_ym" not in acols:
+        conn.execute("ALTER TABLE gx_applications ADD COLUMN target_ym TEXT DEFAULT ''")
+
+    # 직원 고용형태: 트레이너/프로의 출퇴근형(정규) vs 프리랜서형
+    ecols = [r[1] for r in conn.execute("PRAGMA table_info(employees)").fetchall()]
+    if ecols and "work_type" not in ecols:
+        # 'commute'(출퇴근/기본급+수업료) | 'freelance'(수업료만)
+        conn.execute("ALTER TABLE employees ADD COLUMN work_type TEXT DEFAULT 'commute'")
+
+    # 재고 임계치 (Phase 6 자동알림)
+    icols = [r[1] for r in conn.execute("PRAGMA table_info(inventory_items)").fetchall()]
+    if icols and "min_qty" not in icols:
+        conn.execute("ALTER TABLE inventory_items ADD COLUMN min_qty INTEGER DEFAULT 0")
+
+    # 이벤트 ↔ 쿠폰 연결
+    if conn.execute("SELECT name FROM sqlite_master WHERE name='events'").fetchone():
+        evc = [r[1] for r in conn.execute("PRAGMA table_info(events)").fetchall()]
+        if "coupon_id" not in evc:
+            conn.execute("ALTER TABLE events ADD COLUMN coupon_id INTEGER DEFAULT 0")
+
+    conn.executescript("""
+        -- GX 인원 구간제 인센티브
+        CREATE TABLE IF NOT EXISTS gx_pay_rules (
+            product_id       INTEGER PRIMARY KEY,
+            base_amount      INTEGER DEFAULT 0,
+            base_headcount   INTEGER DEFAULT 0,
+            extra_per_person INTEGER DEFAULT 0
+        );
+
+        -- ── Phase 4: PT/레슨 라이프사이클 ──────────────────────
+        CREATE TABLE IF NOT EXISTS lesson_enrollments (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch                 TEXT NOT NULL,
+            member_id              INTEGER NOT NULL,
+            member_name            TEXT DEFAULT '',
+            product_id             INTEGER DEFAULT 0,
+            product_name           TEXT DEFAULT '',
+            lesson_type            TEXT DEFAULT 'PT',     -- 'PT'|'골프레슨'
+            instructor_employee_id INTEGER DEFAULT 0,     -- 담당강사 (변경가능)
+            instructor_name        TEXT DEFAULT '',
+            total_sessions         INTEGER DEFAULT 0,
+            used_sessions          INTEGER DEFAULT 0,
+            pay_type               TEXT DEFAULT '',        -- 스냅샷
+            session_rate           INTEGER DEFAULT 0,
+            percent_snapshot       REAL DEFAULT 0,
+            base_amount            INTEGER DEFAULT 0,      -- 상품가액(VAT제외) — %정산 기준
+            pay_method             TEXT DEFAULT '카드',
+            sale_id                INTEGER DEFAULT 0,
+            status                 TEXT DEFAULT 'active',  -- 'active'|'done'|'refunded'
+            created_at             TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS lesson_sessions (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            enrollment_id          INTEGER NOT NULL,
+            branch                 TEXT NOT NULL,
+            member_id              INTEGER NOT NULL,
+            instructor_employee_id INTEGER DEFAULT 0,
+            scheduled_date         TEXT DEFAULT '',
+            scheduled_time         TEXT DEFAULT '',
+            status                 TEXT DEFAULT 'reserved', -- reserved|pending_sign|completed|no_show|canceled
+            completed_at           TEXT,
+            signed_at              TEXT,
+            signature_png          TEXT DEFAULT '',
+            payroll_period         TEXT DEFAULT '',         -- 'YYYY-MM'
+            created_at             TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── Phase 5: GX 출석 / 프로필 / 커리큘럼 / 피드백 ───────
+        CREATE TABLE IF NOT EXISTS gx_enrollments (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch        TEXT NOT NULL,
+            gx_product_id INTEGER NOT NULL,
+            member_id     INTEGER NOT NULL,
+            member_name   TEXT DEFAULT '',
+            sale_id       INTEGER DEFAULT 0,
+            status        TEXT DEFAULT 'active',
+            target_ym     TEXT DEFAULT '',
+            created_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS gx_attendance (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            gx_product_id INTEGER NOT NULL,
+            session_date  TEXT NOT NULL,
+            member_id     INTEGER NOT NULL,
+            present       INTEGER DEFAULT 1,
+            checked_by    INTEGER DEFAULT 0,
+            branch        TEXT DEFAULT '',
+            created_at    TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(gx_product_id, session_date, member_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS instructor_profiles (
+            employee_id INTEGER PRIMARY KEY,
+            photo_png   TEXT DEFAULT '',
+            intro       TEXT DEFAULT '',
+            career      TEXT DEFAULT '',
+            specialty   TEXT DEFAULT '',
+            updated_at  TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS curriculums (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id   INTEGER DEFAULT 0,
+            gx_product_id INTEGER DEFAULT 0,
+            title         TEXT DEFAULT '',
+            body          TEXT DEFAULT '',
+            branch        TEXT DEFAULT '',
+            updated_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS lesson_feedback (
+            id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+            session_id             INTEGER DEFAULT 0,
+            enrollment_id          INTEGER DEFAULT 0,
+            member_id              INTEGER NOT NULL,
+            instructor_employee_id INTEGER DEFAULT 0,
+            content                TEXT DEFAULT '',
+            created_at             TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── Phase 6: 페이롤 / 일일보고 / 환불 / 민원 / 의견 ─────
+        CREATE TABLE IF NOT EXISTS crm_payroll (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            year             INTEGER NOT NULL,
+            month            INTEGER NOT NULL,
+            employee_id      INTEGER NOT NULL,
+            branch           TEXT DEFAULT '',
+            pt_session_count INTEGER DEFAULT 0,
+            pt_amount        INTEGER DEFAULT 0,
+            gx_session_count INTEGER DEFAULT 0,
+            gx_amount        INTEGER DEFAULT 0,
+            total_amount     INTEGER DEFAULT 0,
+            status           TEXT DEFAULT 'draft',   -- 'draft'|'confirmed'
+            confirmed_by     TEXT DEFAULT '',
+            confirmed_at     TEXT,
+            updated_at       TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(year, month, employee_id)
+        );
+
+        CREATE TABLE IF NOT EXISTS daily_reports (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            employee_id INTEGER NOT NULL,
+            branch      TEXT DEFAULT '',
+            report_date TEXT NOT NULL,
+            comment     TEXT DEFAULT '',
+            created_at  TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(employee_id, report_date)
+        );
+
+        CREATE TABLE IF NOT EXISTS refund_requests (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch           TEXT DEFAULT '',
+            sale_id          INTEGER DEFAULT 0,
+            enrollment_id    INTEGER DEFAULT 0,
+            member_id        INTEGER DEFAULT 0,
+            member_name      TEXT DEFAULT '',
+            reason           TEXT DEFAULT '',
+            paid_amount      INTEGER DEFAULT 0,
+            used_sessions    INTEGER DEFAULT 0,
+            total_sessions   INTEGER DEFAULT 0,
+            suggested_amount INTEGER DEFAULT 0,
+            final_amount     INTEGER DEFAULT 0,
+            status           TEXT DEFAULT 'open',    -- 'open'|'done'
+            requested_by     INTEGER DEFAULT 0,
+            approval_item_id INTEGER DEFAULT 0,
+            created_at       TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS member_complaints (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch           TEXT DEFAULT '',
+            member_id        INTEGER DEFAULT 0,
+            member_name      TEXT DEFAULT '',
+            content          TEXT DEFAULT '',
+            status           TEXT DEFAULT 'open',
+            created_by       INTEGER DEFAULT 0,
+            approval_item_id INTEGER DEFAULT 0,
+            created_at       TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        CREATE TABLE IF NOT EXISTS product_suggestions (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch           TEXT DEFAULT '',
+            employee_id      INTEGER DEFAULT 0,
+            employee_name    TEXT DEFAULT '',
+            content          TEXT DEFAULT '',
+            status           TEXT DEFAULT 'open',
+            approval_item_id INTEGER DEFAULT 0,
+            created_at       TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── Phase 7: 결제 주문(토스 링크/셀프구매) ──────────────
+        CREATE TABLE IF NOT EXISTS payment_orders (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            token         TEXT UNIQUE NOT NULL,          -- 단축URL 토큰
+            order_id      TEXT UNIQUE NOT NULL,          -- 토스 orderId
+            branch        TEXT NOT NULL,
+            member_id     INTEGER DEFAULT 0,
+            member_name   TEXT DEFAULT '',
+            member_phone  TEXT DEFAULT '',
+            product_id    INTEGER DEFAULT 0,
+            product_name  TEXT DEFAULT '',
+            category      TEXT DEFAULT '',
+            base_amount   INTEGER DEFAULT 0,             -- VAT 제외 상품가
+            amount        INTEGER NOT NULL,              -- 실제 청구액
+            pay_method    TEXT DEFAULT '토스',
+            instructor_employee_id INTEGER DEFAULT 0,
+            channel       TEXT DEFAULT 'link',           -- 'link'(직원발송) | 'self'(회원셀프)
+            status        TEXT DEFAULT 'pending',        -- pending|paid|failed|canceled
+            toss_payment_key TEXT DEFAULT '',
+            sale_id       INTEGER DEFAULT 0,
+            created_by    TEXT DEFAULT '',
+            paid_at       TEXT,
+            created_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- GX 개강대기 신청 (최소인원 미달 시)
+        CREATE TABLE IF NOT EXISTS gx_applications (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch        TEXT NOT NULL,
+            gx_product_id INTEGER NOT NULL,
+            member_id     INTEGER NOT NULL,
+            member_name   TEXT DEFAULT '',
+            member_phone  TEXT DEFAULT '',
+            status        TEXT DEFAULT 'waiting',        -- waiting|notified|converted|canceled
+            created_at    TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(gx_product_id, member_id)
+        );
+
+        -- ── 감사 로그 (누가 무엇을 바꿨나) ──────────────────────
+        CREATE TABLE IF NOT EXISTS audit_logs (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts         TEXT DEFAULT (datetime('now','localtime')),
+            actor      TEXT DEFAULT '',                  -- 행위자 이름/계정
+            actor_role TEXT DEFAULT '',
+            branch     TEXT DEFAULT '',
+            action     TEXT NOT NULL,                    -- 'sale.create','sale.refund','payroll.confirm' 등
+            target     TEXT DEFAULT '',                  -- 대상(회원/상품/직원명 등)
+            detail     TEXT DEFAULT ''
+        );
+
+        -- ── 월 마감(락) ─────────────────────────────────────────
+        CREATE TABLE IF NOT EXISTS month_locks (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            year       INTEGER NOT NULL,
+            month      INTEGER NOT NULL,
+            branch     TEXT DEFAULT '',                  -- 빈값=전사
+            locked_by  TEXT DEFAULT '',
+            locked_at  TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(year, month, branch)
+        );
+
+        -- ── 앱 전역 상태 (테스트모드/가상날짜 등) ───────────────
+        CREATE TABLE IF NOT EXISTS app_state (
+            k  TEXT PRIMARY KEY,
+            v  TEXT DEFAULT ''
+        );
+
+        -- ── GX 수업일 확정 (강사가 월별 실제 수업일 지정) ───────
+        CREATE TABLE IF NOT EXISTS gx_sessions (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            gx_product_id INTEGER NOT NULL,
+            branch        TEXT DEFAULT '',
+            ym            TEXT NOT NULL,        -- 'YYYY-MM'
+            session_date  TEXT NOT NULL,        -- 'YYYY-MM-DD'
+            confirmed     INTEGER DEFAULT 0,    -- 강사 확정 여부
+            confirmed_by  TEXT DEFAULT '',
+            is_test       INTEGER DEFAULT 0,
+            created_at    TEXT DEFAULT (datetime('now','localtime')),
+            UNIQUE(gx_product_id, session_date)
+        );
+
+        -- ── 반(수업) 월별 상태: 대기/진행 ──────────────────────
+        CREATE TABLE IF NOT EXISTS gx_class_status (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            gx_product_id INTEGER NOT NULL,
+            ym            TEXT NOT NULL,         -- 'YYYY-MM'
+            status        TEXT DEFAULT 'waiting',-- waiting|running
+            decided_by    TEXT DEFAULT '',
+            decided_at    TEXT,
+            is_test       INTEGER DEFAULT 0,
+            UNIQUE(gx_product_id, ym)
+        );
+
+        -- ── 환불 기록 ───────────────────────────────────────────
+        CREATE TABLE IF NOT EXISTS refunds (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            sale_id       INTEGER DEFAULT 0,
+            branch        TEXT DEFAULT '',
+            member_id     INTEGER DEFAULT 0,
+            member_name   TEXT DEFAULT '',
+            product_name  TEXT DEFAULT '',
+            paid_amount   INTEGER DEFAULT 0,
+            refund_amount INTEGER DEFAULT 0,
+            reason        TEXT DEFAULT '',
+            method        TEXT DEFAULT '',               -- 'toss'|'manual'
+            toss_result   TEXT DEFAULT '',
+            refunded_by   TEXT DEFAULT '',
+            created_at    TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── 쿠폰 정책 ─────────────────────────────────────────
+        CREATE TABLE IF NOT EXISTS coupons (
+            id               INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch           TEXT DEFAULT 'all',       -- 'all' | 지점명
+            name             TEXT NOT NULL,
+            discount_type    TEXT DEFAULT 'amount',    -- 'amount' | 'percent'
+            discount_value   INTEGER DEFAULT 0,        -- 원 또는 %
+            validity_type    TEXT DEFAULT 'permanent', -- 'permanent' | 'period'
+            valid_from       TEXT DEFAULT '',
+            valid_to         TEXT DEFAULT '',
+            valid_days       INTEGER DEFAULT 0,        -- 발급일+N일(날짜 대신)
+            apply_scope      TEXT DEFAULT 'all',       -- 'all' 또는 'gx,lesson' CSV
+            product_ids      TEXT DEFAULT '',          -- 특정 상품 한정(CSV, 선택)
+            min_amount       INTEGER DEFAULT 0,
+            per_member_once  INTEGER DEFAULT 1,
+            is_active        INTEGER DEFAULT 1,
+            created_at       TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── 회원 가입요청 (지점 토큰으로만 접수, 승인제) ─────────
+        CREATE TABLE IF NOT EXISTS signup_requests (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            branch      TEXT NOT NULL,
+            name        TEXT DEFAULT '',          -- 암호화
+            phone       TEXT DEFAULT '',          -- 암호화
+            phone_hash  TEXT DEFAULT '',          -- 중복확인용
+            dong        TEXT DEFAULT '',          -- 암호화
+            ho          TEXT DEFAULT '',          -- 암호화
+            kids        TEXT DEFAULT '',          -- 암호화(JSON: [{name,age}])
+            status      TEXT DEFAULT 'pending',   -- pending|approved|rejected
+            processed_by TEXT DEFAULT '',
+            member_id   INTEGER DEFAULT 0,
+            created_at  TEXT DEFAULT (datetime('now','localtime'))
+        );
+
+        -- ── 회원 쿠폰함 (발급분) ───────────────────────────────
+        CREATE TABLE IF NOT EXISTS member_coupons (
+            id          INTEGER PRIMARY KEY AUTOINCREMENT,
+            coupon_id   INTEGER NOT NULL,
+            member_id   INTEGER NOT NULL,
+            branch      TEXT DEFAULT '',
+            status      TEXT DEFAULT 'available',  -- 'available'|'used'|'expired'
+            expires_at  TEXT DEFAULT '',           -- '' = 영구
+            issued_at   TEXT DEFAULT (datetime('now','localtime')),
+            used_at     TEXT,
+            sale_id     INTEGER DEFAULT 0
+        );
+    """)
+    conn.commit()
+
+    # CREATE 이후 컬럼 보정 (빈 DB에서 테이블 생성 전에 ALTER가 스킵된 경우 대비)
+    def _ensure(tbl, col, ddl):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({tbl})").fetchall()]
+        if cols and col not in cols:
+            conn.execute(f"ALTER TABLE {tbl} ADD COLUMN {ddl}")
+    for _t in ("sales", "payment_orders", "gx_enrollments", "gx_applications",
+               "lesson_enrollments", "gx_sessions", "refunds"):
+        _ensure(_t, "is_test", "is_test INTEGER DEFAULT 0")
+    for _t in ("gx_enrollments", "gx_applications", "payment_orders"):
+        _ensure(_t, "target_ym", "target_ym TEXT DEFAULT ''")
+    conn.commit()
+    conn.close()
+
+
+# ── Phase 3: 결제수단/VAT 헬퍼 ───────────────────────────────
+def round_price(amount) -> int:
+    """가격 표기 규칙: 100원 단위 반올림(끝 2자리 반올림 → 100원 단위로 표기).
+    예) 9,625 → 9,600 · 4,812 → 4,800 · 38,496 → 38,500 · 38,500 → 38,500"""
+    amt = float(amount or 0)
+    return int(amt / 100 + 0.5) * 100   # 100원 단위 반올림
+
+
+def charge_amount(base_amount: int, pay_method: str) -> int:
+    """회원 청구액. 입력 금액(base_amount)은 'VAT 포함가'로 간주.
+    - 현금/계좌이체: VAT 제외(÷1.1)한 금액으로 청구
+    - 카드/토스/관리비청구: 입력 금액 그대로(VAT 포함)
+    최종 금액은 10원 반올림 후 100원 절사."""
+    base = int(base_amount or 0)
+    pm = (pay_method or "").strip()
+    if pm in ("현금", "cash", "계좌이체", "이체", "계좌", "무통장", "transfer"):
+        return round_price(base / 1.1)
+    return round_price(base)
+
+
+# ── Phase 3: GX 구간제 룰 ────────────────────────────────────
+def set_gx_pay_rule(product_id: int, base_amount: int, base_headcount: int, extra_per_person: int):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO gx_pay_rules (product_id, base_amount, base_headcount, extra_per_person)
+        VALUES (?,?,?,?)
+        ON CONFLICT(product_id) DO UPDATE SET
+            base_amount=excluded.base_amount,
+            base_headcount=excluded.base_headcount,
+            extra_per_person=excluded.extra_per_person
+    """, (product_id, int(base_amount or 0), int(base_headcount or 0), int(extra_per_person or 0)))
+    conn.commit()
+    conn.close()
+
+
+def get_gx_pay_rule(product_id: int) -> dict | None:
+    conn = get_conn()
+    r = _one(conn.execute("SELECT * FROM gx_pay_rules WHERE product_id=?", (product_id,)))
+    conn.close()
+    return r
+
+
+def gx_session_pay(product_id: int, headcount: int) -> int:
+    """GX 1회 수업 정산액 = base + max(0, 출석-base_headcount) × extra."""
+    rule = get_gx_pay_rule(product_id)
+    if not rule:
+        return 0
+    extra = max(0, int(headcount) - int(rule["base_headcount"])) * int(rule["extra_per_person"])
+    return int(rule["base_amount"]) + extra
+
+
+# ── Phase 4: PT/레슨 수강권(enrollment) + 세션 라이프사이클 ──────────
+_SESSION_LIVE = ("reserved", "pending_sign", "completed", "no_show")  # 슬롯 점유 상태
+
+
+def create_lesson_enrollment(*, branch, member_id, member_name, product, sale_id,
+                             instructor_employee_id, instructor_name, pay_method) -> int:
+    """PT/레슨 상품 판매 시 수강권 생성. 정산조건은 판매시점 스냅샷."""
+    conn = get_conn()
+    cur = conn.execute("""
+        INSERT INTO lesson_enrollments
+        (branch, member_id, member_name, product_id, product_name, lesson_type,
+         instructor_employee_id, instructor_name, total_sessions, used_sessions,
+         pay_type, session_rate, percent_snapshot, base_amount, pay_method, sale_id, status)
+        VALUES (?,?,?,?,?,?,?,?,?,0,?,?,?,?,?,?, 'active')
+    """, (branch, member_id, member_name,
+          product.get("id", 0), product.get("name", ""),
+          product.get("lesson_type", "PT"),
+          instructor_employee_id, instructor_name,
+          int(product.get("sessions", 0) or 0),
+          product.get("pay_type", ""), int(product.get("session_rate", 0) or 0),
+          float(product.get("_commission_percent", 0) or 0),
+          int(product.get("price", 0) or 0), pay_method, sale_id))
+    eid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return eid
+
+
+def get_enrollments(branch: str = "", member_id: int = 0, instructor_id: int = 0,
+                    status: str = "") -> list[dict]:
+    q = "SELECT * FROM lesson_enrollments WHERE 1=1"
+    p: list = []
+    if branch:        q += " AND branch=?"; p.append(branch)
+    if member_id:     q += " AND member_id=?"; p.append(member_id)
+    if instructor_id: q += " AND instructor_employee_id=?"; p.append(instructor_id)
+    if status:        q += " AND status=?"; p.append(status)
+    q += " ORDER BY id DESC"
+    conn = get_conn()
+    out = _rows(conn.execute(q, p))
+    conn.close()
+    return out
+
+
+def get_enrollment(enrollment_id: int) -> dict | None:
+    conn = get_conn()
+    r = _one(conn.execute("SELECT * FROM lesson_enrollments WHERE id=?", (enrollment_id,)))
+    conn.close()
+    return r
+
+
+def change_enrollment_instructor(enrollment_id: int, emp_id: int, name: str):
+    conn = get_conn()
+    conn.execute(
+        "UPDATE lesson_enrollments SET instructor_employee_id=?, instructor_name=? WHERE id=?",
+        (emp_id, name, enrollment_id))
+    # 미진행(reserved/pending) 세션의 담당강사도 동기화
+    conn.execute("""UPDATE lesson_sessions SET instructor_employee_id=?
+                    WHERE enrollment_id=? AND status IN ('reserved','pending_sign')""",
+                 (emp_id, enrollment_id))
+    conn.commit()
+    conn.close()
+
+
+def _live_session_count(conn, enrollment_id: int) -> int:
+    ph = ",".join("?" * len(_SESSION_LIVE))
+    row = conn.execute(
+        f"SELECT COUNT(*) FROM lesson_sessions WHERE enrollment_id=? AND status IN ({ph})",
+        (enrollment_id, *_SESSION_LIVE)).fetchone()
+    return row[0] if row else 0
+
+
+def reserve_session(enrollment_id: int, date: str, time: str = "") -> tuple[bool, str]:
+    """세션 예약. 총 횟수 초과 불가(취소분은 재예약 가능)."""
+    conn = get_conn()
+    enr = _one(conn.execute("SELECT * FROM lesson_enrollments WHERE id=?", (enrollment_id,)))
+    if not enr:
+        conn.close(); return False, "수강권을 찾을 수 없습니다"
+    if _live_session_count(conn, enrollment_id) >= int(enr["total_sessions"]):
+        conn.close(); return False, "예약 가능한 횟수를 모두 사용했습니다"
+    conn.execute("""
+        INSERT INTO lesson_sessions
+        (enrollment_id, branch, member_id, instructor_employee_id, scheduled_date, scheduled_time, status)
+        VALUES (?,?,?,?,?,?, 'reserved')
+    """, (enrollment_id, enr["branch"], enr["member_id"],
+          enr["instructor_employee_id"], date, time))
+    conn.commit()
+    conn.close()
+    return True, "예약되었습니다"
+
+
+def cancel_session(session_id: int) -> bool:
+    conn = get_conn()
+    conn.execute("UPDATE lesson_sessions SET status='canceled' WHERE id=? AND status='reserved'",
+                 (session_id,))
+    ok = conn.total_changes > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def complete_session(session_id: int) -> bool:
+    """강사 '진행완료' → 회원 서명 대기."""
+    conn = get_conn()
+    conn.execute("""UPDATE lesson_sessions
+                    SET status='pending_sign', completed_at=datetime('now','localtime')
+                    WHERE id=? AND status='reserved'""", (session_id,))
+    ok = conn.total_changes > 0
+    conn.commit()
+    conn.close()
+    return ok
+
+
+def _consume_one(conn, enrollment_id: int):
+    conn.execute("UPDATE lesson_enrollments SET used_sessions=used_sessions+1 WHERE id=?",
+                 (enrollment_id,))
+    enr = _one(conn.execute("SELECT total_sessions, used_sessions FROM lesson_enrollments WHERE id=?",
+                            (enrollment_id,)))
+    if enr and enr["used_sessions"] >= enr["total_sessions"]:
+        conn.execute("UPDATE lesson_enrollments SET status='done' WHERE id=?", (enrollment_id,))
+
+
+def sign_session(session_id: int, signature_png: str) -> tuple[bool, str]:
+    """회원 캔버스 서명 → 완료 확정 + 1회 차감 + 페이롤 기간 기록."""
+    conn = get_conn()
+    s = _one(conn.execute("SELECT * FROM lesson_sessions WHERE id=?", (session_id,)))
+    if not s or s["status"] != "pending_sign":
+        conn.close(); return False, "서명 대기 상태가 아닙니다"
+    period = (s["completed_at"] or "")[:7] or _today_period()
+    conn.execute("""UPDATE lesson_sessions
+                    SET status='completed', signature_png=?, signed_at=datetime('now','localtime'),
+                        payroll_period=? WHERE id=?""", (signature_png, period, session_id))
+    _consume_one(conn, s["enrollment_id"])
+    conn.commit()
+    conn.close()
+    return True, "수업이 완료 처리되었습니다"
+
+
+def no_show_session(session_id: int) -> tuple[bool, str]:
+    """강사 노쇼 처리 → 서명 없이 진행 인정 + 1회 차감 + 페이롤 포함."""
+    conn = get_conn()
+    s = _one(conn.execute("SELECT * FROM lesson_sessions WHERE id=?", (session_id,)))
+    if not s or s["status"] not in ("reserved", "pending_sign"):
+        conn.close(); return False, "처리할 수 없는 상태입니다"
+    period = _today_period()
+    conn.execute("""UPDATE lesson_sessions
+                    SET status='no_show', completed_at=datetime('now','localtime'),
+                        payroll_period=? WHERE id=?""", (period, session_id))
+    _consume_one(conn, s["enrollment_id"])
+    conn.commit()
+    conn.close()
+    return True, "노쇼 처리되었습니다 (진행 인정)"
+
+
+def get_sessions(enrollment_id: int) -> list[dict]:
+    conn = get_conn()
+    out = _rows(conn.execute(
+        "SELECT * FROM lesson_sessions WHERE enrollment_id=? ORDER BY scheduled_date, id",
+        (enrollment_id,)))
+    conn.close()
+    return out
+
+
+def get_member_sessions(member_id: int, statuses: tuple = ()) -> list[dict]:
+    q = """SELECT s.*, e.product_name, e.instructor_name, e.lesson_type
+           FROM lesson_sessions s JOIN lesson_enrollments e ON e.id=s.enrollment_id
+           WHERE s.member_id=?"""
+    p: list = [member_id]
+    if statuses:
+        q += f" AND s.status IN ({','.join('?'*len(statuses))})"; p += list(statuses)
+    q += " ORDER BY s.scheduled_date, s.id"
+    conn = get_conn()
+    out = _rows(conn.execute(q, p))
+    conn.close()
+    return out
+
+
+def _today_period() -> str:
+    from datetime import datetime
+    return datetime.now().strftime("%Y-%m")
+
+
+def get_product(product_id: int) -> dict | None:
+    conn = get_conn()
+    r = _one(conn.execute("SELECT * FROM products WHERE id=?", (product_id,)))
+    conn.close()
+    return r
+
+
+def create_gx_enrollment(*, branch, gx_product_id, member_id, member_name, sale_id,
+                         target_ym="", is_test=0) -> int:
+    from domains.branch_app.testmode import today_str
+    if not target_ym:
+        target_ym = today_str()[:7]
+    conn = get_conn()
+    cur = conn.execute("""
+        INSERT INTO gx_enrollments (branch, gx_product_id, member_id, member_name, sale_id, status, target_ym, is_test)
+        VALUES (?,?,?,?,?, 'active', ?, ?)
+    """, (branch, gx_product_id, member_id, member_name, sale_id, target_ym, is_test))
+    rid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return rid
+
+
+# ── Phase 5: GX 출석 / 프로필 / 커리큘럼 / 피드백 ─────────────────
+def get_gx_members(gx_product_id: int) -> list[dict]:
+    conn = get_conn()
+    out = _rows(conn.execute(
+        "SELECT * FROM gx_enrollments WHERE gx_product_id=? AND status='active' ORDER BY member_name",
+        (gx_product_id,)))
+    conn.close()
+    return out
+
+
+def get_gx_classes_for_instructor(employee_id: int, branch: str) -> list[dict]:
+    """GX강사가 담당하는 GX상품 목록 (수업관리용)."""
+    conn = get_conn()
+    out = _rows(conn.execute("""
+        SELECT * FROM products
+        WHERE category='gx' AND is_active=1 AND branch=? AND instructor_employee_id=?
+        ORDER BY name
+    """, (branch, employee_id)))
+    conn.close()
+    return out
+
+
+def mark_gx_attendance(gx_product_id: int, session_date: str, member_id: int,
+                       present: int, checked_by: int, branch: str = ""):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO gx_attendance (gx_product_id, session_date, member_id, present, checked_by, branch)
+        VALUES (?,?,?,?,?,?)
+        ON CONFLICT(gx_product_id, session_date, member_id)
+        DO UPDATE SET present=excluded.present, checked_by=excluded.checked_by
+    """, (gx_product_id, session_date, member_id, present, checked_by, branch))
+    conn.commit()
+    conn.close()
+
+
+def get_gx_attendance(gx_product_id: int, session_date: str) -> list[dict]:
+    conn = get_conn()
+    out = _rows(conn.execute(
+        "SELECT * FROM gx_attendance WHERE gx_product_id=? AND session_date=?",
+        (gx_product_id, session_date)))
+    conn.close()
+    return out
+
+
+def upsert_instructor_profile(employee_id: int, data: dict):
+    conn = get_conn()
+    conn.execute("""
+        INSERT INTO instructor_profiles (employee_id, photo_png, intro, career, specialty, updated_at)
+        VALUES (?,?,?,?,?, datetime('now','localtime'))
+        ON CONFLICT(employee_id) DO UPDATE SET
+            photo_png=excluded.photo_png, intro=excluded.intro,
+            career=excluded.career, specialty=excluded.specialty,
+            updated_at=datetime('now','localtime')
+    """, (employee_id, data.get("photo_png", ""), data.get("intro", ""),
+          data.get("career", ""), data.get("specialty", "")))
+    conn.commit()
+    conn.close()
+
+
+def get_instructor_profile(employee_id: int) -> dict | None:
+    conn = get_conn()
+    r = _one(conn.execute("SELECT * FROM instructor_profiles WHERE employee_id=?", (employee_id,)))
+    conn.close()
+    return r
+
+
+def upsert_curriculum(data: dict) -> int:
+    conn = get_conn()
+    if data.get("id"):
+        conn.execute("""UPDATE curriculums SET title=?, body=?, updated_at=datetime('now','localtime')
+                        WHERE id=?""", (data.get("title",""), data.get("body",""), data["id"]))
+        rid = data["id"]
+    else:
+        cur = conn.execute("""INSERT INTO curriculums (employee_id, gx_product_id, title, body, branch)
+                              VALUES (?,?,?,?,?)""",
+                           (data.get("employee_id",0), data.get("gx_product_id",0),
+                            data.get("title",""), data.get("body",""), data.get("branch","")))
+        rid = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return rid
+
+
+def get_curriculums(employee_id: int = 0, gx_product_id: int = 0, branch: str = "") -> list[dict]:
+    q = "SELECT * FROM curriculums WHERE 1=1"; p = []
+    if employee_id: q += " AND employee_id=?"; p.append(employee_id)
+    if gx_product_id: q += " AND gx_product_id=?"; p.append(gx_product_id)
+    if branch: q += " AND branch=?"; p.append(branch)
+    q += " ORDER BY id DESC"
+    conn = get_conn(); out = _rows(conn.execute(q, p)); conn.close()
+    return out
+
+
+def add_feedback(*, member_id, instructor_employee_id, content, session_id=0, enrollment_id=0) -> int:
+    conn = get_conn()
+    cur = conn.execute("""INSERT INTO lesson_feedback
+        (session_id, enrollment_id, member_id, instructor_employee_id, content)
+        VALUES (?,?,?,?,?)""",
+        (session_id, enrollment_id, member_id, instructor_employee_id, content))
+    rid = cur.lastrowid
+    conn.commit(); conn.close()
+    return rid
+
+
+def get_member_feedback(member_id: int) -> list[dict]:
+    conn = get_conn()
+    out = _rows(conn.execute(
+        "SELECT * FROM lesson_feedback WHERE member_id=? ORDER BY id DESC", (member_id,)))
+    conn.close()
+    return out
+
+
+# ── Phase 6: 페이롤 집계 ─────────────────────────────────────────
+def compute_crm_payroll(year: int, month: int, branch: str = "") -> list[dict]:
+    """월별 강사 보수 집계 → crm_payroll draft 갱신. (확정분은 건드리지 않음)"""
+    period = f"{year:04d}-{month:02d}"
+    conn = get_conn()
+    agg: dict = {}   # employee_id -> {pt_cnt, pt_amt, gx_cnt, gx_amt, branch}
+
+    def slot(eid, br):
+        if eid not in agg:
+            agg[eid] = {"pt_cnt": 0, "pt_amt": 0, "gx_cnt": 0, "gx_amt": 0, "branch": br}
+        return agg[eid]
+
+    # PT/레슨: 완료/노쇼 세션
+    q = """SELECT s.instructor_employee_id AS eid, s.branch AS br,
+                  e.pay_type, e.session_rate, e.percent_snapshot, e.base_amount, e.total_sessions
+           FROM lesson_sessions s JOIN lesson_enrollments e ON e.id=s.enrollment_id
+           WHERE s.status IN ('completed','no_show') AND s.payroll_period=?"""
+    p = [period]
+    if branch:
+        q += " AND s.branch=?"; p.append(branch)
+    for r in conn.execute(q, p).fetchall():
+        eid, br, pay_type, srate, pct, base, total = r
+        if not eid:
+            continue
+        if pay_type == "per_session":
+            pay = int(srate or 0)
+        elif pay_type == "percent":
+            per = (int(base or 0) / int(total)) if total else 0
+            pay = round(per * float(pct or 0) / 100.0)
+        else:
+            pay = 0
+        s = slot(eid, br); s["pt_cnt"] += 1; s["pt_amt"] += pay
+
+    # GX: 월내 (상품, 날짜)별 출석인원 → 구간제, 상품 담당강사에 귀속
+    q2 = """SELECT a.gx_product_id, a.session_date, a.branch,
+                   SUM(CASE WHEN a.present=1 THEN 1 ELSE 0 END) AS headcount,
+                   pr.instructor_employee_id
+            FROM gx_attendance a JOIN products pr ON pr.id=a.gx_product_id
+            WHERE substr(a.session_date,1,7)=?"""
+    p2 = [period]
+    if branch:
+        q2 += " AND a.branch=?"; p2.append(branch)
+    q2 += " GROUP BY a.gx_product_id, a.session_date"
+    for gx_pid, sdate, br, headcount, inst in conn.execute(q2, p2).fetchall():
+        if not inst:
+            continue
+        pay = gx_session_pay(gx_pid, headcount or 0)
+        s = slot(inst, br or ""); s["gx_cnt"] += 1; s["gx_amt"] += pay
+
+    # draft 업서트 (확정된 행은 스킵)
+    for eid, v in agg.items():
+        total_amt = v["pt_amt"] + v["gx_amt"]
+        row = _one(conn.execute(
+            "SELECT id, status FROM crm_payroll WHERE year=? AND month=? AND employee_id=?",
+            (year, month, eid)))
+        if row and row["status"] == "confirmed":
+            continue
+        conn.execute("""
+            INSERT INTO crm_payroll
+            (year, month, employee_id, branch, pt_session_count, pt_amount,
+             gx_session_count, gx_amount, total_amount, status, updated_at)
+            VALUES (?,?,?,?,?,?,?,?,?, 'draft', datetime('now','localtime'))
+            ON CONFLICT(year, month, employee_id) DO UPDATE SET
+                branch=excluded.branch, pt_session_count=excluded.pt_session_count,
+                pt_amount=excluded.pt_amount, gx_session_count=excluded.gx_session_count,
+                gx_amount=excluded.gx_amount, total_amount=excluded.total_amount,
+                updated_at=datetime('now','localtime')
+        """, (year, month, eid, v["branch"], v["pt_cnt"], v["pt_amt"],
+              v["gx_cnt"], v["gx_amt"], total_amt))
+    conn.commit()
+    conn.close()
+    return get_crm_payroll(year, month, branch)
+
+
+def get_crm_payroll(year: int, month: int, branch: str = "", employee_id: int = 0) -> list[dict]:
+    q = """SELECT cp.*, e.name AS employee_name
+           FROM crm_payroll cp LEFT JOIN employees e ON e.id=cp.employee_id
+           WHERE cp.year=? AND cp.month=?"""
+    p = [year, month]
+    if branch: q += " AND cp.branch=?"; p.append(branch)
+    if employee_id: q += " AND cp.employee_id=?"; p.append(employee_id)
+    q += " ORDER BY cp.total_amount DESC"
+    conn = get_conn(); out = _rows(conn.execute(q, p)); conn.close()
+    return out
+
+
+def confirm_crm_payroll(year: int, month: int, admin_name: str, branch: str = "") -> int:
+    conn = get_conn()
+    q = """UPDATE crm_payroll SET status='confirmed', confirmed_by=?,
+           confirmed_at=datetime('now','localtime') WHERE year=? AND month=? AND status='draft'"""
+    p = [admin_name, year, month]
+    if branch: q += " AND branch=?"; p.append(branch)
+    conn.execute(q, p)
+    n = conn.total_changes
+    conn.commit(); conn.close()
+    return n
+
+
+# ── Phase 6: 일일보고 (자동집계 + 코멘트) ────────────────────────
+def daily_report_autodata(employee_id: int, branch: str, date_str: str) -> dict:
+    """그날의 내 매출 + 진행 수업 자동 집계."""
+    from shared.crypto import decrypt as _dec
+    conn = get_conn()
+    # 직원 이름은 암호화 저장 → 복호화 후 sold_by(평문 스냅샷)와 매칭
+    _nm = conn.execute("SELECT name FROM employees WHERE id=?", (employee_id,)).fetchone()
+    emp_name = _dec(_nm[0]) if _nm else ""
+    sales = _rows(conn.execute(
+        "SELECT * FROM sales WHERE branch=? AND sale_date=? AND sold_by=?",
+        (branch, date_str, emp_name)))
+    sess = _rows(conn.execute("""
+        SELECT s.*, e.product_name, e.member_name FROM lesson_sessions s
+        JOIN lesson_enrollments e ON e.id=s.enrollment_id
+        WHERE s.instructor_employee_id=? AND s.status IN ('completed','no_show')
+              AND substr(COALESCE(s.completed_at,''),1,10)=?""", (employee_id, date_str)))
+    conn.close()
+    return {
+        "sales": sales, "sales_total": sum(x.get("amount", 0) for x in sales),
+        "sessions": sess, "session_count": len(sess),
+    }
+
+
+def save_daily_report(employee_id: int, branch: str, date_str: str, comment: str):
+    conn = get_conn()
+    conn.execute("""INSERT INTO daily_reports (employee_id, branch, report_date, comment)
+                    VALUES (?,?,?,?)
+                    ON CONFLICT(employee_id, report_date)
+                    DO UPDATE SET comment=excluded.comment""",
+                 (employee_id, branch, date_str, comment))
+    conn.commit(); conn.close()
+
+
+def get_daily_report(employee_id: int, date_str: str) -> dict | None:
+    conn = get_conn()
+    r = _one(conn.execute(
+        "SELECT * FROM daily_reports WHERE employee_id=? AND report_date=?",
+        (employee_id, date_str)))
+    conn.close()
+    return r
+
+
+# ── Phase 6: 환불 계산 ───────────────────────────────────────────
+def refund_suggestion(paid_amount: int, base_amount: int, total_sessions: int,
+                      used_sessions: int, penalty_rate: float = 0.10) -> int:
+    """기본 제안 환불액 = 결제액 - 사용회차분 - 위약금(최대 10%)."""
+    used_value = (int(base_amount or 0) / total_sessions * used_sessions) if total_sessions else 0
+    penalty = int(paid_amount or 0) * penalty_rate
+    return max(0, round(int(paid_amount or 0) - used_value - penalty))
+
+
+# ══════════════════════════════════════════════════════════════
+#  쿠폰 시스템
+# ══════════════════════════════════════════════════════════════
+from datetime import datetime as _dt, timedelta as _td
+
+
+def create_coupon(data: dict) -> int:
+    conn = get_conn()
+    if data.get("id"):
+        conn.execute("""UPDATE coupons SET name=?, discount_type=?, discount_value=?,
+            validity_type=?, valid_from=?, valid_to=?, valid_days=?, apply_scope=?,
+            product_ids=?, min_amount=?, per_member_once=?, is_active=?, branch=? WHERE id=?""",
+            (data["name"], data.get("discount_type","amount"), int(data.get("discount_value",0)),
+             data.get("validity_type","permanent"), data.get("valid_from",""), data.get("valid_to",""),
+             int(data.get("valid_days",0)), data.get("apply_scope","all") or "all",
+             data.get("product_ids",""), int(data.get("min_amount",0)),
+             int(data.get("per_member_once",1)), int(data.get("is_active",1)),
+             data.get("branch","all"), data["id"]))
+        rid = data["id"]
+    else:
+        cur = conn.execute("""INSERT INTO coupons
+            (branch, name, discount_type, discount_value, validity_type, valid_from, valid_to,
+             valid_days, apply_scope, product_ids, min_amount, per_member_once, is_active)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+            (data.get("branch","all"), data["name"], data.get("discount_type","amount"),
+             int(data.get("discount_value",0)), data.get("validity_type","permanent"),
+             data.get("valid_from",""), data.get("valid_to",""), int(data.get("valid_days",0)),
+             data.get("apply_scope","all") or "all", data.get("product_ids",""),
+             int(data.get("min_amount",0)), int(data.get("per_member_once",1)), 1))
+        rid = cur.lastrowid
+    conn.commit(); conn.close()
+    return rid
+
+
+def get_coupons(branch: str = "") -> list[dict]:
+    conn = get_conn()
+    if branch:
+        rows = _rows(conn.execute(
+            "SELECT * FROM coupons WHERE (branch='all' OR branch=?) ORDER BY id DESC", (branch,)))
+    else:
+        rows = _rows(conn.execute("SELECT * FROM coupons ORDER BY id DESC"))
+    conn.close()
+    return rows
+
+
+def get_coupon(coupon_id: int) -> dict | None:
+    conn = get_conn()
+    r = _one(conn.execute("SELECT * FROM coupons WHERE id=?", (coupon_id,)))
+    conn.close()
+    return r
+
+
+def deactivate_coupon(coupon_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE coupons SET is_active=0 WHERE id=?", (coupon_id,))
+    conn.commit(); conn.close()
+
+
+def _coupon_expiry(coupon: dict) -> str:
+    """발급 시 만료일 계산. 영구=''(빈값)."""
+    if coupon.get("validity_type") != "period":
+        return ""
+    if coupon.get("valid_days"):
+        return (_dt.now() + _td(days=int(coupon["valid_days"]))).strftime("%Y-%m-%d")
+    return coupon.get("valid_to", "") or ""
+
+
+def issue_coupon_to_member(coupon_id: int, member_id: int, branch: str = "") -> tuple[bool, str]:
+    """쿠폰 1장 지급. per_member_once면 중복 지급 차단."""
+    coupon = get_coupon(coupon_id)
+    if not coupon or not coupon["is_active"]:
+        return False, "유효하지 않은 쿠폰"
+    conn = get_conn()
+    if coupon["per_member_once"]:
+        dup = conn.execute(
+            "SELECT 1 FROM member_coupons WHERE coupon_id=? AND member_id=?",
+            (coupon_id, member_id)).fetchone()
+        if dup:
+            conn.close()
+            return False, "이미 발급된 쿠폰입니다"
+    conn.execute("""INSERT INTO member_coupons (coupon_id, member_id, branch, status, expires_at)
+                    VALUES (?,?,?, 'available', ?)""",
+                 (coupon_id, member_id, branch or coupon.get("branch",""), _coupon_expiry(coupon)))
+    conn.commit(); conn.close()
+    return True, "발급되었습니다"
+
+
+def issue_coupon_bulk(coupon_id: int, branch: str = "") -> int:
+    """전체 회원 일괄 지급. branch='' 또는 'all'이면 전 지점."""
+    conn = get_conn()
+    if branch and branch != "all":
+        mids = [r[0] for r in conn.execute(
+            "SELECT id FROM members WHERE branch=? AND status='active'", (branch,)).fetchall()]
+    else:
+        mids = [r[0] for r in conn.execute(
+            "SELECT id FROM members WHERE status='active'").fetchall()]
+    conn.close()
+    n = 0
+    for mid in mids:
+        ok, _ = issue_coupon_to_member(coupon_id, mid, branch)
+        if ok:
+            n += 1
+    return n
+
+
+def issue_coupon_selected(coupon_id: int, member_ids: list[int], branch: str = "") -> int:
+    n = 0
+    for mid in member_ids:
+        ok, _ = issue_coupon_to_member(coupon_id, int(mid), branch)
+        if ok:
+            n += 1
+    return n
+
+
+def _refresh_expired(conn):
+    today = _dt.now().strftime("%Y-%m-%d")
+    conn.execute("""UPDATE member_coupons SET status='expired'
+                    WHERE status='available' AND expires_at!='' AND expires_at < ?""", (today,))
+    conn.commit()
+
+
+def get_member_coupons(member_id: int, available_only: bool = False) -> list[dict]:
+    conn = get_conn()
+    _refresh_expired(conn)
+    q = """SELECT mc.*, c.name, c.discount_type, c.discount_value, c.apply_scope,
+                  c.min_amount, c.product_ids
+           FROM member_coupons mc JOIN coupons c ON c.id=mc.coupon_id
+           WHERE mc.member_id=?"""
+    p = [member_id]
+    if available_only:
+        q += " AND mc.status='available'"
+    q += " ORDER BY mc.id DESC"
+    rows = _rows(conn.execute(q, p))
+    conn.close()
+    return rows
+
+
+def _coupon_applies(c: dict, category: str, product_id: int, amount: int) -> bool:
+    scope = (c.get("apply_scope") or "all").strip()
+    if scope and scope != "all":
+        cats = [s.strip() for s in scope.split(",") if s.strip()]
+        if category and cats and category not in cats:
+            return False
+    pids = (c.get("product_ids") or "").strip()
+    if pids:
+        idlist = [s.strip() for s in pids.split(",") if s.strip()]
+        if idlist and str(product_id) not in idlist:
+            return False
+    if c.get("min_amount") and amount < int(c["min_amount"]):
+        return False
+    return True
+
+
+def applicable_member_coupons(member_id: int, category: str, product_id: int, amount: int) -> list[dict]:
+    """현재 결제(카테고리/상품/금액)에 사용 가능한 회원 쿠폰만."""
+    out = []
+    for c in get_member_coupons(member_id, available_only=True):
+        if _coupon_applies(c, category, product_id, amount):
+            out.append(c)
+    return out
+
+
+def coupon_discount(member_coupon: dict, amount: int) -> int:
+    """할인액 계산 (결제액을 넘지 않음)."""
+    if member_coupon.get("discount_type") == "percent":
+        d = round(int(amount) * int(member_coupon.get("discount_value", 0)) / 100)
+    else:
+        d = int(member_coupon.get("discount_value", 0))
+    return max(0, min(int(amount), d))
+
+
+def redeem_member_coupon(member_coupon_id: int, member_id: int, category: str,
+                         product_id: int, amount: int, sale_id: int = 0) -> tuple[int, str]:
+    """쿠폰 사용 처리. 반환: (할인액, 메시지). 실패 시 (0, 사유)."""
+    conn = get_conn()
+    _refresh_expired(conn)
+    mc = _one(conn.execute("""SELECT mc.*, c.discount_type, c.discount_value, c.apply_scope,
+                  c.min_amount, c.product_ids FROM member_coupons mc
+                  JOIN coupons c ON c.id=mc.coupon_id WHERE mc.id=?""", (member_coupon_id,)))
+    if not mc or mc["member_id"] != member_id:
+        conn.close(); return 0, "쿠폰을 찾을 수 없습니다"
+    if mc["status"] != "available":
+        conn.close(); return 0, "사용할 수 없는 쿠폰입니다"
+    if not _coupon_applies(mc, category, product_id, amount):
+        conn.close(); return 0, "이 결제에 사용할 수 없는 쿠폰입니다"
+    disc = coupon_discount(mc, amount)
+    conn.execute("""UPDATE member_coupons SET status='used',
+                    used_at=datetime('now','localtime'), sale_id=? WHERE id=?""",
+                 (sale_id, member_coupon_id))
+    conn.commit(); conn.close()
+    return disc, "쿠폰 적용"
+
+
+def set_event_coupon(event_id: int, coupon_id: int):
+    conn = get_conn()
+    conn.execute("UPDATE events SET coupon_id=? WHERE id=?", (coupon_id, event_id))
+    conn.commit(); conn.close()
+
+
+# ══════════════════════════════════════════════════════════════
+#  회원 가입요청 (지점 토큰 기반, 승인제)
+# ══════════════════════════════════════════════════════════════
+def create_signup_request(*, branch, name, phone, dong="", ho="", kids="") -> tuple[bool, str, int]:
+    from shared.crypto import encrypt as _enc, blind_phone as _bph
+    ph_hash = _bph(phone)
+    conn = get_conn()
+    dup = conn.execute(
+        "SELECT 1 FROM signup_requests WHERE branch=? AND phone_hash=? AND status='pending'",
+        (branch, ph_hash)).fetchone()
+    if dup:
+        conn.close(); return False, "이미 접수된 가입요청이 있습니다", 0
+    exist = conn.execute(
+        "SELECT 1 FROM members WHERE branch=? AND phone_hash=?", (branch, ph_hash)).fetchone()
+    if exist:
+        conn.close(); return False, "이미 등록된 회원입니다", 0
+    cur = conn.execute("""INSERT INTO signup_requests (branch, name, phone, phone_hash, dong, ho, kids)
+        VALUES (?,?,?,?,?,?,?)""",
+        (branch, _enc(name), _enc(phone), ph_hash, _enc(dong), _enc(ho), _enc(kids)))
+    rid = cur.lastrowid
+    conn.commit(); conn.close()
+    return True, "가입요청이 접수되었습니다. 승인 후 이용 가능합니다.", rid
+
+
+def list_signup_requests(branch: str, status: str = "pending") -> list[dict]:
+    conn = get_conn()
+    out = _rows(conn.execute(
+        "SELECT * FROM signup_requests WHERE branch=? AND status=? ORDER BY id DESC",
+        (branch, status)))
+    conn.close()
+    return out
+
+
+def reject_signup_request(req_id: int, by_name: str = "") -> bool:
+    conn = get_conn()
+    conn.execute("UPDATE signup_requests SET status='rejected', processed_by=? WHERE id=? AND status='pending'",
+                 (by_name, req_id))
+    ok = conn.total_changes > 0
+    conn.commit(); conn.close()
+    return ok
+
+
+def approve_signup_request(req_id: int, by_name: str = "") -> tuple[bool, str, int]:
+    """가입요청 승인 → 회원 생성(임시PIN=전화뒷4, 첫로그인 변경강제)."""
+    from domains.branch_app.db import upsert_member
+    conn = get_conn()
+    r = _one(conn.execute("SELECT * FROM signup_requests WHERE id=? AND status='pending'", (req_id,)))
+    conn.close()
+    if not r:
+        return False, "처리할 수 없는 요청입니다", 0
+    mid = upsert_member({
+        "branch": r["branch"], "name": r["name"], "phone": r["phone"],
+        "dong": r["dong"], "ho": r["ho"],
+        "note": (("키즈:" + r["kids"]) if r.get("kids") else ""), "status": "active",
+    })
+    conn = get_conn()
+    conn.execute("UPDATE members SET must_change_pw=1 WHERE id=?", (mid,))
+    conn.execute("UPDATE signup_requests SET status='approved', processed_by=?, member_id=? WHERE id=?",
+                 (by_name, mid, req_id))
+    conn.commit(); conn.close()
+    return True, "승인되었습니다", mid

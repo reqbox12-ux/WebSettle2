@@ -78,6 +78,9 @@
   // ── 페이지 정의 ────────────────────────────────────────────
   const PAGES = {
     dashboard:  { label: '대시보드',   icon: 'layout-grid',  sec: 'WORKSPACE' },
+    live:       { label: '실시간 매출', icon: 'radio',        sec: 'WORKSPACE' },
+    recon:      { label: '매출 대사·마감', icon: 'scale',     sec: 'WORKSPACE' },
+    mgmtfee:    { label: '관리비 청구', icon: 'receipt',      sec: '관리' },
     branch:     { label: '지점',       icon: 'building-2',   sec: '관리' },
     payroll:    { label: '인사/급여',  icon: 'credit-card',  sec: '관리' },
     attendance: { label: '출퇴근 현황', icon: 'clock',        sec: '관리' },
@@ -126,8 +129,9 @@
 
   function renderPage() {
     const el = document.getElementById('page-content');
-    ({ dashboard: renderDashboard, branch: renderBranch, attendance: renderAttendance,
-       payroll: renderPayroll, upload: renderUpload, settings: renderSettings,
+    ({ dashboard: renderDashboard, live: renderLive, recon: renderRecon, mgmtfee: renderMgmtFee,
+       branch: renderBranch, attendance: renderAttendance, payroll: renderPayroll,
+       upload: renderUpload, settings: renderSettings,
     }[currentPage] || (() => { el.innerHTML = '<div class="empty">준비 중</div>'; }))(el);
   }
 
@@ -267,6 +271,190 @@
       }
     }
   }
+
+  /* ════ 실시간 매출 (CRM 연동) ═══════════════════════════════ */
+  let _liveTimer = null;
+  async function renderLive(el) {
+    el.innerHTML = `
+      <div class="ph"><div class="ph-title">실시간 매출</div>
+        <div class="ph-sub">CRM에서 발생하는 결제를 실시간 집계 (업로드 데이터와 별개) · 30초 자동 갱신</div></div>
+      <div class="filter-bar">${ymFilter(loadLive)}
+        <span id="live-dot" style="color:var(--pos);font-size:12px">● 실시간</span></div>
+      <div id="live-body"><div class="empty">로드 중…</div></div>`;
+    loadLive();
+    if (_liveTimer) clearInterval(_liveTimer);
+    _liveTimer = setInterval(() => { if (currentPage === 'live') loadLive(true); else clearInterval(_liveTimer); }, 30000);
+  }
+
+  async function loadLive(quiet) {
+    const body = document.getElementById('live-body');
+    if (!body) return;
+    if (!quiet) body.innerHTML = '<div class="empty">로드 중…</div>';
+    const r = await api(`/api/live/sales?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) return;
+    const d = await r.json();
+    const W = (v) => Math.round(v || 0).toLocaleString();
+
+    const branchRows = d.by_branch.map(b => {
+      const rate = b.goal > 0 ? (b.amount / b.goal * 100) : 0;
+      const col = rate >= 100 ? 'var(--pos)' : (rate >= 70 ? '#B86E1F' : 'var(--red)');
+      return `<tr><td style="text-align:left;font-weight:600">${b.branch}</td>
+        <td>${W(b.amount)}원</td><td>${b.count}건</td>
+        <td>${b.goal ? W(b.goal) + '원' : '—'}</td>
+        <td style="min-width:140px">${b.goal ? `
+          <div style="display:flex;align-items:center;gap:8px">
+            <div style="flex:1;background:var(--sf2);border-radius:999px;height:7px;overflow:hidden">
+              <div style="width:${Math.min(rate,100).toFixed(1)}%;height:100%;background:${col}"></div></div>
+            <span style="font-size:12px;font-weight:700;color:${col}">${rate.toFixed(0)}%</span></div>` : '<span style="color:var(--ink3)">목표 미설정</span>'}</td>
+      </tr>`;
+    }).join('');
+
+    const catChips = d.by_category.map(c =>
+      `<span style="display:inline-block;background:var(--sf2);border-radius:8px;padding:6px 12px;margin:0 6px 6px 0;font-size:13px">
+        ${c.label} <b>${W(c.amount)}원</b></span>`).join('');
+    const payChips = d.by_pay.map(c =>
+      `<span style="display:inline-block;background:var(--sf2);border-radius:8px;padding:6px 12px;margin:0 6px 6px 0;font-size:13px">
+        ${c.label} <b>${W(c.amount)}원</b></span>`).join('');
+
+    body.innerHTML = `
+      <div class="kpi-grid">
+        <div class="kpi"><div class="kpi-lbl">이번달 매출</div><div class="kpi-val">${W(d.month_total)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">오늘 매출</div><div class="kpi-val pos">${W(d.today_total)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">결제 건수</div><div class="kpi-val">${d.tx_count}건</div></div>
+        <div class="kpi"><div class="kpi-lbl">지점 수</div><div class="kpi-val">${d.by_branch.length}곳</div></div>
+      </div>
+      <div class="card" style="padding:16px 20px"><b>카테고리별</b><div style="margin-top:10px">${catChips||'—'}</div>
+        <b style="display:block;margin-top:12px">결제수단별</b><div style="margin-top:10px">${payChips||'—'}</div></div>
+      <div class="card"><div class="card-head">지점별 매출 · 목표 달성률</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl"><thead><tr><th>지점</th><th>매출</th><th>건수</th><th>목표</th><th>달성률</th></tr></thead>
+            <tbody>${branchRows || '<tr><td colspan="5" class="empty">매출 없음</td></tr>'}</tbody></table></div></div>
+      <div class="card"><div class="card-head">최근 결제 (30건)</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl"><thead><tr><th>일자</th><th>지점</th><th>회원</th><th>상품</th><th>분류</th><th>금액</th><th>결제</th><th>담당</th></tr></thead>
+            <tbody>${d.recent.map(x=>`<tr>
+              <td>${x.date}</td><td style="text-align:left">${x.branch}</td><td style="text-align:left">${x.member||'—'}</td>
+              <td style="text-align:left">${x.product}</td><td>${x.category}</td>
+              <td style="font-weight:700">${W(x.amount)}</td><td>${x.pay}</td><td>${x.by||'—'}</td></tr>`).join('')
+              || '<tr><td colspan="8" class="empty">결제 없음</td></tr>'}</tbody></table></div></div>`;
+  }
+
+  /* ════ 매출 대사 + 월 마감 ═══════════════════════════════════ */
+  async function renderRecon(el) {
+    el.innerHTML = `
+      <div class="ph"><div class="ph-title">매출 대사 · 월 마감</div>
+        <div class="ph-sub">CRM 카드결제 vs 카드사 업로드 매출 비교 → 확인 후 월 마감(잠금)</div></div>
+      <div class="filter-bar">${ymFilter(loadRecon)}</div>
+      <div id="recon-body"><div class="empty">로드 중…</div></div>`;
+    loadRecon();
+  }
+
+  async function loadRecon() {
+    const body = document.getElementById('recon-body');
+    if (!body) return;
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const [rr, lr] = await Promise.all([
+      api(`/api/recon?year=${selYear}&month=${selMonth}`),
+      api(`/api/locks?year=${selYear}`),
+    ]);
+    if (!rr || !rr.ok) { body.innerHTML = '<div class="empty">오류</div>'; return; }
+    const d = await rr.json();
+    const locks = lr && lr.ok ? await lr.json() : [];
+    const W = v => Math.round(v||0).toLocaleString();
+    const locked = locks.some(l => l.year===selYear && l.month===selMonth && (l.branch===''));
+    const stLbl = { match:'<span class="bdg pos">일치</span>',
+      crm_more:'<span class="bdg neg">CRM 많음</span>', card_more:'<span class="bdg neg">카드사 많음</span>' };
+
+    const rows = d.rows.map(r=>`<tr>
+      <td style="text-align:left;font-weight:600">${r.branch}</td>
+      <td>${W(r.crm)}원</td><td>${W(r.card)}원</td>
+      <td style="font-weight:700;color:${r.diff===0?'var(--ink3)':(Math.abs(r.diff)<=Math.max(r.card*0.05,1000)?'var(--ink3)':'var(--red)')}">${r.diff>0?'+':''}${W(r.diff)}</td>
+      <td>${stLbl[r.status]||r.status}</td></tr>`).join('');
+
+    body.innerHTML = `
+      <div class="kpi-grid" style="grid-template-columns:repeat(3,1fr)">
+        <div class="kpi"><div class="kpi-lbl">CRM 카드결제 합계</div><div class="kpi-val">${W(d.total_crm)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">카드사 업로드 합계</div><div class="kpi-val">${W(d.total_card)}원</div></div>
+        <div class="kpi"><div class="kpi-lbl">불일치 지점</div><div class="kpi-val ${d.mismatch?'neg':'pos'}">${d.mismatch}곳</div></div>
+      </div>
+      <div class="card" style="padding:14px 18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap">
+        <span style="font-weight:700">${selYear}년 ${selMonth}월 마감 상태:</span>
+        ${locked ? '<span class="bdg pos">🔒 마감됨</span>' : '<span class="bdg neg">열림</span>'}
+        ${user.role==='admin' ? (locked
+          ? `<button class="xbtn" onclick="unlockMonth()">마감 해제</button>`
+          : `<button class="xbtn primary" onclick="lockMonth()">🔒 이 달 마감(잠금)</button>`) : ''}
+        <span style="font-size:12px;color:var(--ink3)">마감하면 해당 월 데이터 변경이 잠깁니다 (대사 확인 후 권장)</span>
+      </div>
+      <div class="card"><div class="card-head">지점별 대사 (카드 수수료 5% 이내는 '일치' 처리)</div>
+        <div style="overflow-x:auto;padding:8px 0 4px">
+          <table class="tbl"><thead><tr><th>지점</th><th>CRM 카드결제</th><th>카드사 매출</th><th>차이</th><th>판정</th></tr></thead>
+            <tbody>${rows || '<tr><td colspan="5" class="empty">데이터 없음</td></tr>'}</tbody></table></div>
+        <div style="padding:0 18px 14px;font-size:12px;color:var(--ink3)">
+          💡 '카드사 많음'=CRM 미입력 의심 / 'CRM 많음'=카드사 미반영·미입금 의심</div></div>`;
+  }
+
+  window.lockMonth = async function () {
+    if (!confirm(`${selYear}년 ${selMonth}월을 마감(잠금)할까요?`)) return;
+    const r = await api('/api/locks', { method:'POST', body: JSON.stringify({ year:selYear, month:selMonth, branch:'' }) });
+    if (r && r.ok) { showToast('🔒 마감 완료'); loadRecon(); } else showToast('마감 실패', 'err');
+  };
+  window.unlockMonth = async function () {
+    if (!confirm('마감을 해제할까요?')) return;
+    const r = await api(`/api/locks?year=${selYear}&month=${selMonth}&branch=`, { method:'DELETE' });
+    if (r && r.ok) { showToast('마감 해제'); loadRecon(); } else showToast('실패', 'err');
+  };
+
+  /* ════ 관리비 청구서 (관리비청구 결제 모음) ═════════════════ */
+  async function renderMgmtFee(el) {
+    el.innerHTML = `
+      <div class="ph"><div class="ph-title">관리비 청구</div>
+        <div class="ph-sub">'관리비청구'로 결제된 내역을 아파트(지점)별로 모아 청구서를 만듭니다</div></div>
+      <div class="filter-bar">${ymFilter(loadMgmtFee)}</div>
+      <div id="mf-body"><div class="empty">로드 중…</div></div>`;
+    loadMgmtFee();
+  }
+
+  async function loadMgmtFee() {
+    const body = document.getElementById('mf-body');
+    if (!body) return;
+    body.innerHTML = '<div class="empty">로드 중…</div>';
+    const r = await api(`/api/mgmt-fee?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) { body.innerHTML = '<div class="empty">오류</div>'; return; }
+    const d = await r.json();
+    const W = v => Math.round(v||0).toLocaleString();
+    if (!d.branches.length) { body.innerHTML = '<div class="empty">📭 이번 달 관리비청구 내역이 없습니다 (결제 시 결제수단을 \'관리비청구\'로 선택)</div>'; return; }
+
+    body.innerHTML = `
+      <div class="card" style="padding:16px 20px;display:flex;align-items:center;gap:16px">
+        <span style="font-weight:700">${selYear}년 ${selMonth}월 관리비청구 합계</span>
+        <span style="font-size:22px;font-weight:900;color:var(--red)">${W(d.grand_total)}원</span>
+        <span style="font-size:12px;color:var(--ink3)">${d.branches.length}개 지점</span>
+      </div>
+      ${d.branches.map(b => `
+        <div class="card">
+          <div class="card-head" style="display:flex;justify-content:space-between;align-items:center">
+            <span>🏢 ${b.branch} <span style="color:var(--red);font-weight:800">${W(b.total)}원</span>
+              <span style="font-size:12px;color:var(--ink3)">(${b.items.length}건)</span></span>
+            <button class="xbtn primary sm" onclick="dlMgmtFee('${b.branch.replace(/'/g,'')}')">📥 청구서 Excel</button>
+          </div>
+          <div style="overflow-x:auto;padding:8px 0 4px">
+            <table class="tbl"><thead><tr><th>일자</th><th>분류</th><th>항목</th><th>회원</th><th>금액</th></tr></thead>
+              <tbody>${b.items.map(i=>`<tr>
+                <td>${i.date}</td><td>${i.category}</td>
+                <td style="text-align:left">${i.product}</td><td style="text-align:left">${i.member||'—'}</td>
+                <td style="font-weight:700">${W(i.amount)}원</td></tr>`).join('')}</tbody></table>
+          </div></div>`).join('')}`;
+  }
+
+  window.dlMgmtFee = async function (branch) {
+    const r = await api(`/api/mgmt-fee/excel?year=${selYear}&month=${selMonth}&branch=${encodeURIComponent(branch)}`);
+    if (!r || !r.ok) { showToast('내역이 없습니다', 'err'); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `관리비청구서_${branch}_${selYear}년${String(selMonth).padStart(2,'0')}월.xlsx`;
+    a.click();
+  };
 
   /* ════ 지점 (상세/관리/매출입력) ═══════════════════════════ */
   let selBranch = '';
@@ -907,6 +1095,7 @@
       <table class="tbl">
         <thead><tr>
           ${th('name', '이름', 'left')}${th('branch', '지점', 'left')}${th('emp_type', '유형', 'left')}
+          <th style="text-align:left">CRM 직무</th>
           ${th('base_salary', '기본급')}${th('phone', '전화번호')}${th('email', '이메일', 'left')}
           ${th('join_date', '입사일')}<th></th>
         </tr></thead>
@@ -914,6 +1103,7 @@
           <td style="text-align:left;font-weight:600">${e.name}</td>
           <td style="text-align:left">${e.branch || '—'}</td>
           <td style="text-align:left">${TYPE_LBL[e.emp_type] || e.emp_type || '—'}</td>
+          <td style="text-align:left">${(e.role_labels && e.role_labels.length) ? e.role_labels.join(', ') : '<span style="color:var(--ink3)">미지정</span>'}</td>
           <td>${fmtWon(e.base_salary)}</td>
           <td>${e.phone || '—'}</td>
           <td style="text-align:left">${e.email || '—'}</td>
@@ -925,10 +1115,21 @@
       </table>`;
   }
 
+  // CRM 직무 메타 (캐시)
+  const ROLE_OPTS = [
+    ['info','인포'], ['trainer','트레이너'], ['golf_pro','골프프로'],
+    ['gx','GX강사'], ['manager','지점관리자'],
+  ];
+
   window.empForm = async function (id) {
     await loadMeta();
     const e = id ? (empCache.find(x => x.id === id) || {}) : {};
     const brOpts = META.branches.map(b => `<option ${b === e.branch ? 'selected' : ''}>${b}</option>`).join('');
+    const myRoles = e.roles || [];
+    const roleChecks = ROLE_OPTS.map(([k, l]) => `
+      <label style="display:inline-flex;align-items:center;gap:6px;font-weight:600;margin-right:14px">
+        <input type="checkbox" class="ef-role" value="${k}" ${myRoles.includes(k) ? 'checked' : ''}
+          onchange="empRoleLimit()"> ${l}</label>`).join('');
     document.getElementById('emp-form').innerHTML = `
       <div class="card" style="padding:18px 20px;margin-bottom:14px">
         <div style="font-weight:800;margin-bottom:12px">${id ? '✏️ 직원 수정' : '➕ 직원 추가'}</div>
@@ -943,6 +1144,21 @@
           <label>전화번호<input id="ef-phone" value="${e.phone || ''}" placeholder="01012345678"></label>
           <label>이메일<input id="ef-email" value="${e.email || ''}"></label>
           <label>입사일<input id="ef-join" value="${e.join_date || ''}" placeholder="2026-01-01"></label>
+          <label>주민번호 <span style="font-weight:400;color:var(--ink3)">(암호화·멀티지점 묶음키)</span>
+            <input id="ef-idnum" value="${e.id_number || ''}" placeholder="여러 지점 근무 시 동일 입력"></label>
+          <label>계좌번호 <span style="font-weight:400;color:var(--ink3)">(암호화)</span>
+            <input id="ef-acct" value="${e.account_no || ''}" placeholder="급여 입금 계좌"></label>
+          <label>정산요율 % <span style="font-weight:400;color:var(--ink3)">(트레이너/프로 %상품)</span>
+            <input id="ef-comm" type="number" step="0.1" value="${e.commission_percent || 0}"></label>
+          <label>고용형태 <span style="font-weight:400;color:var(--ink3)">(트레이너/프로)</span>
+            <select id="ef-worktype">
+              <option value="commute" ${(e.work_type||'commute')==='commute'?'selected':''}>출퇴근형 (기본급+수업료)</option>
+              <option value="freelance" ${e.work_type==='freelance'?'selected':''}>프리랜서형 (수업료만)</option>
+            </select></label>
+        </div>
+        <div style="margin-top:14px">
+          <div style="font-weight:700;margin-bottom:6px">CRM 직무 <span style="font-weight:400;color:var(--ink3)">(이 지점 기준 · 최대 2개)</span></div>
+          <div id="ef-roles">${roleChecks}</div>
         </div>
         <div style="margin-top:14px;display:flex;gap:8px">
           <button class="xbtn primary" onclick="empSave(${id || 0})">저장</button>
@@ -950,11 +1166,23 @@
         </div></div>`;
   };
 
+  // 직무 최대 2개 제한
+  window.empRoleLimit = function () {
+    const checked = [...document.querySelectorAll('.ef-role:checked')];
+    const boxes = [...document.querySelectorAll('.ef-role')];
+    const limit = checked.length >= 2;
+    boxes.forEach(b => { if (!b.checked) b.disabled = limit; });
+  };
+
   window.empSave = async function (id) {
     const v = (x) => document.getElementById(`ef-${x}`).value.trim();
+    const roles = [...document.querySelectorAll('.ef-role:checked')].map(b => b.value);
     const body = { id, name: v('name'), branch: v('branch'), emp_type: v('type'),
       base_salary: parseInt(v('salary')) || 0, dependents: parseInt(v('dep')) || 1,
-      phone: v('phone'), email: v('email'), join_date: v('join') };
+      phone: v('phone'), email: v('email'), join_date: v('join'),
+      id_number: v('idnum'), account_no: v('acct'), commission_percent: parseFloat(v('comm')) || 0,
+      work_type: document.getElementById('ef-worktype').value,
+      roles };
     if (!body.name) { showToast('이름을 입력하세요', 'err'); return; }
     const r = await api('/api/employees', { method: 'POST', body: JSON.stringify(body) });
     const d = r ? await r.json().catch(() => ({})) : {};
@@ -1003,6 +1231,12 @@
           </table></div></div>` : '';
 
     body.innerHTML = `
+      <div class="card" style="padding:14px 18px;display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <b>🔗 CRM 페이롤 연동</b>
+        <span style="font-size:12.5px;color:var(--ink3)">CRM에서 확정된 PT·GX 수업료를 급여 지급액에 자동 입력 (고용형태 반영)</span>
+        <button class="xbtn primary" onclick="importCrmPayroll()">CRM 페이롤 가져오기</button>
+        <button class="xbtn" onclick="dlCrmPayroll()">📥 엑셀</button>
+      </div>
       <div class="card" style="padding:12px 18px;font-size:12.5px;color:var(--ink3)">
         💡 지급액(세전)을 확인·수정 후 <b>급여 확정</b>을 누르면 세금·4대보험이 자동 계산되어 저장됩니다.
         공단 고지내역이 업로드된 직원은 실납부액이 자동 적용됩니다. 0원은 제외됩니다.</div>
@@ -1012,6 +1246,31 @@
       <button class="xbtn primary" style="padding:13px 28px;font-size:14.5px"
         onclick="confirmPayroll()">💾 ${selYear}년 ${selMonth}월 급여 확정</button>`;
   }
+
+  window.importCrmPayroll = async function () {
+    const r = await api(`/api/payroll/crm-import?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) { showToast('가져오기 실패', 'err'); return; }
+    const rows = await r.json();
+    if (!rows.length) { showToast('확정된 CRM 페이롤이 없습니다 (CRM에서 먼저 월 확정)', 'err'); return; }
+    let filled = 0, missing = 0;
+    rows.forEach(x => {
+      const el = document.getElementById(`pay-${x.employee_id}`);
+      if (el) { el.value = x.suggested_gross; el.style.background = 'var(--poss)'; filled++; }
+      else missing++;
+    });
+    let msg = `✅ ${filled}명 지급액 자동 입력`;
+    if (missing) msg += ` · ${missing}명은 ERP 직원목록에 없어 제외(이름·지점 확인)`;
+    showToast(msg);
+  };
+  window.dlCrmPayroll = async function () {
+    const r = await api(`/api/payroll/crm-import/excel?year=${selYear}&month=${selMonth}`);
+    if (!r || !r.ok) { showToast('확정된 CRM 페이롤이 없습니다', 'err'); return; }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `CRM페이롤_${selYear}년${String(selMonth).padStart(2,'0')}월.xlsx`;
+    a.click();
+  };
 
   window.confirmPayroll = async function () {
     if (!confirm(`${selYear}년 ${selMonth}월 급여를 확정할까요?\n기존 확정 내역은 교체됩니다.`)) return;

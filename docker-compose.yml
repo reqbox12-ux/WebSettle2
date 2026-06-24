@@ -1,0 +1,56 @@
+version: "3.8"
+
+# ─────────────────────────────────────────────────────────────
+# WebSettle2 — 새 ERP(8503) + 새 CRM 포털(CRM_PORT)
+# 두 서비스가 같은 이미지를 쓰고, 같은 settlement.db 를 공유.
+#
+# DB_DIR  : NAS의 실제 데이터 폴더 (기존 Streamlit과 동일 DB 공유)
+#           예) /volume1/docker/webapp/data
+# CRM_PORT: 검증 단계엔 8512(기존 포털과 병행), 전환 시 8502
+# ─────────────────────────────────────────────────────────────
+
+services:
+  erp:
+    build: .
+    image: websettle2
+    container_name: websettle2-erp
+    restart: unless-stopped
+    command: python -m uvicorn main:app --host 0.0.0.0 --port 8503
+    ports:
+      - "8503:8503"
+    environment:
+      - TZ=Asia/Seoul
+      - SETTLEMENT_DB=/app/data/settlement.db
+      - PORTAL_BASE_URL=${ERP_BASE_URL:-https://erp.laonfitness.com}
+    volumes:
+      - ${DB_DIR:-./data}:/app/data
+      - ${BACKUP_DIR:-./backups}:/app/backups
+
+  crm:
+    image: websettle2
+    container_name: websettle2-crm
+    restart: unless-stopped
+    depends_on:
+      - erp
+    command: python -m uvicorn branch_server:app --host 0.0.0.0 --port 8502
+    ports:
+      - "${CRM_PORT:-8502}:8502"
+    environment:
+      - TZ=Asia/Seoul
+      - SETTLEMENT_DB=/app/data/settlement.db
+      - PORTAL_BASE_URL=${PORTAL_BASE_URL:-https://attend.laonfitness.com}
+    volumes:
+      - ${DB_DIR:-./data}:/app/data
+      - ${BACKUP_DIR:-./backups}:/app/backups
+
+  # Cloudflare 터널 (도메인 연결). 토큰은 .env의 CF_TUNNEL_TOKEN.
+  # network_mode host 라야 localhost:8502/8503 에 접근 가능.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: websettle2-cloudflared
+    restart: unless-stopped
+    network_mode: host
+    command: tunnel --no-autoupdate run --token ${CF_TUNNEL_TOKEN}
+    depends_on:
+      - erp
+      - crm
